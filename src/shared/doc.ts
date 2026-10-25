@@ -331,3 +331,60 @@ export function wordCount(src: string): number {
   const b = splitFront(src).body.replace(/```[\s\S]*?```/g, ' ').replace(/^@.*$/gm, ' ').replace(/[#>*_`|:[\]()!-]+/g, ' ')
   return (b.match(/[\p{L}\p{N}]+/gu) ?? []).length
 }
+
+// ─── Lotes: varios cambios en una sola llamada (y una sola entrada del historial) ───────────────
+
+export interface Op {
+  op: 'write' | 'replace' | 'section' | 'slide' | 'append' | 'meta'
+  content?: string
+  find?: string
+  replace?: string
+  all?: boolean
+  heading?: string
+  mode?: string
+  n?: number
+  to?: number
+  key?: string
+  value?: unknown
+}
+
+/** Aplica los cambios en orden. Si uno falla no se aplica ninguno (el error dice cuál). */
+export function applyOps(src: string, ops: Op[]): { content: string; labels: string[] } {
+  let s = src
+  const labels: string[] = []
+  ops.forEach((o, i) => {
+    try {
+      switch (o.op) {
+        case 'write':
+          s = o.content ?? ''
+          labels.push('documento reescrito')
+          break
+        case 'replace':
+          s = replaceText(s, o.find ?? '', o.replace ?? '', !!o.all).content
+          labels.push(`«${(o.find ?? '').slice(0, 30)}» → «${(o.replace ?? '').slice(0, 30)}»`)
+          break
+        case 'section':
+          s = editSection(s, o.heading ?? '', o.content ?? '', (o.mode ?? 'body') as SectionMode)
+          labels.push(`sección «${o.heading}»`)
+          break
+        case 'slide':
+          s = editSlide(s, Number(o.n), (o.mode ?? 'replace') as SlideMode, o.content ?? '', o.to)
+          labels.push(`diapositiva ${o.n}`)
+          break
+        case 'append':
+          s = s.replace(/\s*$/, '') + '\n\n' + (o.content ?? '').replace(/\s*$/, '') + '\n'
+          labels.push('texto añadido')
+          break
+        case 'meta':
+          s = setMeta(s, o.key ?? '', typeof o.value === 'string' ? parseValue(o.value) : o.value)
+          labels.push(`cabecera ${o.key}`)
+          break
+        default:
+          throw new Error(`operación desconocida «${(o as { op: string }).op}» (write, replace, section, slide, append, meta)`)
+      }
+    } catch (e) {
+      throw new Error(`Cambio ${i + 1} (${o.op}): ${(e as Error).message}. No se ha aplicado ninguno.`)
+    }
+  })
+  return { content: s, labels }
+}

@@ -60,6 +60,9 @@ buho-docs replace "Informe.md" "erata" "errata" --author Claude
 buho-docs check "Deck.md"                              # diapositivas que no caben, iconos, imágenes
 buho-docs export "Informe.md"                          # PDF junto al .md
 buho-docs history "Informe.md"
+buho-docs batch "Informe.md" --file cambios.json        # varios cambios de una vez
+buho-docs snapshot "Informe.md" --page 3              # PNG de una página
+claude -p "…" --output-format stream-json --include-partial-messages --verbose | buho-docs stream "Informe.md" --section "Ventas" --claude
 buho-docs skill                                        # la guía completa para agentes
 ```
 
@@ -70,7 +73,7 @@ buho-docs skill                                        # la guía completa para 
 
 ## Velocidad
 
-`node bench/velocidad.mjs` compara Búho Docs con la forma de siempre (un script de Python con reportlab) sobre el mismo Markdown de 20 páginas y los mismos 5 arreglos. Resultados en [`bench/resultados.md`](bench/resultados.md): cada arreglo se ve en directo en ~0,1 s y, con el tiempo normal que tarda un agente entre comandos, el PDF sale en ~0,1 s porque ya está hecho.
+`node bench/velocidad.mjs` compara Búho Docs con la forma de siempre (un script de Python con reportlab) sobre el mismo Markdown de 20 páginas y los mismos 5 arreglos. Resultados en [`bench/resultados.md`](bench/resultados.md): cada arreglo se ve en directo en ~0,1 s y, con el tiempo normal que tarda un agente entre comandos, el PDF sale en ~0,1 s porque ya está hecho. La cuenta completa, contando lo que tarda el agente en escribir y comprobar, está en [`bench/ventana-total.md`](bench/ventana-total.md): crear un 35 % más rápido y corregir unas 6 veces más rápido.
 
 ## Instalar o usar portable
 

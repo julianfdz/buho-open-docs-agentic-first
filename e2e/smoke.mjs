@@ -125,6 +125,47 @@ try {
   await cli('restore', doc, first.id.slice(0, 8), '--author', 'Claude')
   check(text(doc) === readFileSync(join(root, 'examples', 'beneficios-ia-pymes.md'), 'utf8'), 'restore vuelve a la versión inicial')
 
+  // Lote: varios cambios en una sola llamada y una sola entrada del historial.
+  writeFileSync(join(out, 'ops.json'), JSON.stringify([
+    { op: 'replace', find: 'Dónde ahorra horas', replace: 'Dónde ahorra horas de verdad' },
+    { op: 'meta', key: 'lugar', value: 'Cartagena' },
+    { op: 'append', content: '## Anexo del lote\n\nTexto añadido en lote.' }
+  ]))
+  const nHist = (await cliJson('history', doc)).length
+  const bt = await cliJson('batch', doc, '--file', join(out, 'ops.json'), '--author', 'Claude')
+  const h2 = await cliJson('history', doc)
+  check(bt.applied === 3 && h2.length === nHist + 1 && text(doc).includes('Cartagena') && text(doc).includes('Anexo del lote'), `batch: ${bt.applied} cambios en una entrada del historial`)
+  let bErr = ''
+  try {
+    writeFileSync(join(out, 'malo.json'), JSON.stringify([{ op: 'replace', find: 'Cartagena', replace: 'Lorca' }, { op: 'replace', find: 'texto que no existe', replace: 'x' }]))
+    await cli('batch', doc, '--file', join(out, 'malo.json'))
+  } catch (e) {
+    bErr = e.stderr
+  }
+  check(/Cambio 2/.test(bErr) && text(doc).includes('Cartagena'), 'batch con un cambio imposible no aplica ninguno')
+
+  // Escritura en directo: el texto aparece en el editor mientras llega.
+  const { spawn } = await import('node:child_process')
+  const sp = spawn('node', [join(root, 'bin', 'buho-docs.mjs'), 'stream', doc, '--section', 'Anexo del lote', '--author', 'Claude'], { env })
+  const frase = 'Esta frase llega poco a poco, como si la escribiera la IA en este momento. '.repeat(4)
+  let seenPartial = false
+  for (let i = 0; i < frase.length; i += 12) {
+    sp.stdin.write(frase.slice(i, i + 12))
+    await sleep(40)
+    if (!seenPartial && i > frase.length / 2) seenPartial = (await page.locator('.cm-content').innerText()).includes('Esta frase llega poco a poco')
+  }
+  sp.stdin.end()
+  await new Promise((r) => sp.on('close', r))
+  check(seenPartial, 'stream: el texto se ve en el editor antes de terminar')
+  check(text(doc).includes(frase.trim()), 'stream: al terminar queda guardado entero')
+
+  // Foto de una página para agentes.
+  const snap = await cliJson('snapshot', doc, '--page', '2', '--out', join(out, 'pagina2.png'))
+  check(existsSync(snap.file) && readFileSync(snap.file).length > 10000, `snapshot: PNG de la página 2 (${(snap.bytes / 1024).toFixed(0)} KB)`)
+
+  // Volver a la versión original para el resto de la prueba.
+  await cli('restore', doc, first.id.slice(0, 8), '--author', 'Claude')
+
   // PDF A4.
   const pdf = await cliJson('export', doc)
   check(existsSync(pdf.file) && pdf.pages === 3 && readFileSync(pdf.file).subarray(0, 5).toString() === '%PDF-', `PDF A4: ${pdf.pages} páginas, ${(pdf.bytes / 1024).toFixed(0)} KB`)

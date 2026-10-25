@@ -1,15 +1,16 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, net, protocol, session, shell } from 'electron'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { basename, dirname, extname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { DEFAULT_SETTINGS, type ChangeKind, type DocKind, type Settings } from '@shared/types'
-import { editSection, editSlide, kindOf, outline, parseValue, replaceText, setMeta, splitFront, splitSlides, titleOf, type SectionMode, type SlideMode } from '@shared/doc'
+import { applyOps, editSection, editSlide, kindOf, type Op, outline, parseValue, replaceText, setMeta, splitFront, splitSlides, titleOf, type SectionMode, type SlideMode } from '@shared/doc'
 import { unified } from '@shared/diff'
 import { CONTAINERS, LAYOUTS } from '@shared/syntax'
 import * as docs from './docs'
 import { historyBefore, historyEntry, listHistory, tagNextChange } from './history'
-import { checkDoc, closeExporter, exportPdf } from './exporter'
+import { checkDoc, closeExporter, exportPdf, snapshot } from './exporter'
 import { template } from './templates'
 import { startApi, stopApi } from './api'
 import { syncAgentSkills, type SkillTarget } from './agentSkills'
@@ -206,6 +207,58 @@ async function apiCall(method: string, p: Record<string, unknown>): Promise<unkn
       win?.webContents.send('show', { path: d.path, line: Number(s('line')) || undefined })
       reveal()
       return { ok: true, path: d.path }
+    }
+    case 'batch': {
+      const target = path()
+      const ops = (Array.isArray(p.ops) ? p.ops : JSON.parse(need('ops', 'lista de cambios'))) as Op[]
+      if (!ops.length) throw new Error('La lista de cambios está vacía')
+      if (!existsSync(target)) {
+        // Documento nuevo escrito entero en un lote.
+        const { content, labels } = applyOps('', ops)
+        const d = docs.createDoc(target, content, s('author') ?? 'IA', 'ai')
+        win?.webContents.send('open', d)
+        reveal()
+        return { ok: true, changed: true, created: true, path: d.path, applied: labels.length }
+      }
+      let labels: string[] = []
+      const r = await docs.applyChange(
+        target,
+        (src) => {
+          const x = applyOps(src, ops)
+          labels = x.labels
+          return x.content
+        },
+        ai(ops.length === 1 ? 'Cambio' : `${ops.length} cambios`)
+      )
+      return { ...result(r), applied: labels.length, labels }
+    }
+    case 'streamStart': {
+      const target = path()
+      const mode = s('mode') ?? (s('heading') ? 'body' : 'append')
+      const heading = s('heading')
+      if (!existsSync(target)) docs.createDoc(target, '', s('author') ?? 'IA', 'ai')
+      const place = (src: string, mark: string): string => {
+        if (mode === 'write') return mark
+        if (heading) return editSection(src, heading, mark, mode as SectionMode)
+        return src.replace(/\s*$/, '') + (src.trim() ? '\n\n' : '') + mark + '\n'
+      }
+      const id = await docs.streamStart(target, place, s('author') ?? 'IA', s('summary') ?? (heading ? `Sección «${heading}» escrita en directo` : 'Texto escrito en directo'))
+      reveal()
+      return { ok: true, id, path: target }
+    }
+    case 'streamChunk':
+      docs.streamChunk(need('id', 'id de la escritura'), String(p.text ?? ''))
+      return { ok: true }
+    case 'streamEnd':
+      return { ok: true, ...(await docs.streamEnd(need('id', 'id de la escritura'))), content: undefined }
+    case 'snapshot': {
+      const target = path()
+      const page = Number(s('page')) || 1
+      const shot = await snapshot(await docs.current(target), target, page, Number(s('width')) || 900)
+      const out = s('out') ? resolve(s('out')!) : join(tmpdir(), 'buho-docs', `${basename(target, extname(target))}-p${page}.png`)
+      mkdirSync(dirname(out), { recursive: true })
+      writeFileSync(out, shot.png)
+      return { ok: true, file: out, page, pages: shot.pages, kind: shot.kind, bytes: shot.png.length }
     }
     case 'tag': {
       const target = path()

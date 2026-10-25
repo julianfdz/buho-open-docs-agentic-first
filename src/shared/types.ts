@@ -47,6 +47,8 @@ export interface DocChange {
   summary: string
   /** El cambio lo ha pedido un agente: la app lo enseña aunque no sea el documento activo. */
   focus: boolean
+  /** Trozo de una escritura en directo (aún no está en disco ni en el historial). */
+  streaming?: boolean
 }
 
 export interface Settings {

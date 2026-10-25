@@ -56,7 +56,7 @@ export default function App(): React.JSX.Element {
   const [saving, setSaving] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [info, setInfo] = useState<AppInfo | null>(null)
-  const [lastAi, setLastAi] = useState<{ author: string; at: number } | null>(null)
+  const [lastAi, setLastAi] = useState<{ author: string; at: number; writing?: boolean } | null>(null)
 
   const tabsRef = useRef(tabs)
   tabsRef.current = tabs
@@ -139,6 +139,11 @@ export default function App(): React.JSX.Element {
       const n = ++nonce
       setEdFlash({ lines, nonce: n })
       setPvFlash({ lines: lines.map((l) => l + 1), reveal: c.kind !== 'user', nonce: n })
+    }
+    if (c.streaming) {
+      // Escritura en directo: el texto va apareciendo; el aviso y el historial llegan al terminar.
+      setLastAi({ author: c.author, at: Date.now(), writing: true })
+      return
     }
     if (c.kind !== 'user') {
       say(`${c.author}: ${c.summary}`, { ai: c.kind === 'ai' })
@@ -410,7 +415,7 @@ export default function App(): React.JSX.Element {
             <span className="grow" />
             {lastAi && Date.now() - lastAi.at < 10 * 60 * 1000 && (
               <span className="ai-badge">
-                <Bot size={13} /> {lastAi.author} ha editado a las {new Date(lastAi.at).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
+                <Bot size={13} /> {lastAi.writing ? `${lastAi.author} está escribiendo…` : `${lastAi.author} ha editado a las ${new Date(lastAi.at).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}`}
               </span>
             )}
             <span className="muted">{saving ? 'Guardando…' : dirty ? (settings.autosave ? 'Escribiendo…' : 'Sin guardar (Ctrl+S)') : 'Guardado'}</span>

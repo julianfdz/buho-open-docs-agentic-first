@@ -21,6 +21,10 @@
  *   buho-docs history <archivo.md> [--limit 20] | diff <archivo.md> [id] | restore <archivo.md> <id>
  *   buho-docs show <archivo.md> [--line N]          (lo enseña en la app, en esa línea)
  *   buho-docs tag <archivo.md> --author Claude      (firma tu próximo guardado directo del archivo)
+ *   buho-docs batch <archivo.md> --file cambios.json  (varios cambios de una vez; crea el .md si no existe)
+ *   buho-docs stream <archivo.md> [--section "Título"] [--mode body|append|after|write] [--claude] < texto
+ *                                                   (el texto aparece en directo mientras llega)
+ *   buho-docs snapshot <archivo.md> [--page N] [--width 900] [--out pagina.png]   (foto de una página)
  *
  * El texto nuevo se pasa con --file <ruta>, con --text "…" o con - (entrada estándar).
  * Opciones globales: --author <nombre> (firma en el historial), --json, --no-launch.
@@ -40,7 +44,7 @@ function die(msg, code = 1) {
   process.exit(code)
 }
 
-const FLAGS = new Set(['all', 'lines', 'json', 'no-launch', 'stdin', 'path', 'help'])
+const FLAGS = new Set(['all', 'lines', 'json', 'no-launch', 'stdin', 'path', 'help', 'claude'])
 function parseArgs(argv) {
   const pos = []
   const opt = {}
@@ -140,14 +144,14 @@ const file = (i, what = 'archivo .md') => {
 async function readStdin() {
   const chunks = []
   for await (const c of process.stdin) chunks.push(c)
-  return Buffer.concat(chunks).toString('utf8').replace(/^﻿/, '')
+  return Buffer.concat(chunks).toString('utf8').replace(/^\uFEFF/, '')
 }
 
 /** Texto nuevo: --file, --text, - (entrada estándar) o el argumento en la posición indicada. */
 async function content(i, required = true) {
   if (typeof opt.file === 'string') {
     if (!existsSync(opt.file)) die(`No existe ${opt.file}`)
-    return readFileSync(opt.file, 'utf8').replace(/^﻿/, '')
+    return readFileSync(opt.file, 'utf8').replace(/^\uFEFF/, '')
   }
   if (typeof opt.text === 'string') return opt.text
   if (opt.stdin || args[i] === '-') return readStdin()
@@ -302,6 +306,87 @@ switch (cmd) {
   case 'tag': {
     const r = await call('POST', '/v1/tag', { path: file(0), author: author() ?? 'IA', seconds: opt.seconds })
     opt.json ? out(r) : print(r.message)
+    break
+  }
+  case 'batch': {
+    const path = file(0)
+    const raw = await content(1)
+    let ops
+    try {
+      ops = raw.trim().startsWith('[') ? JSON.parse(raw) : raw.split(/\r?\n/).filter((l) => l.trim()).map((l) => JSON.parse(l))
+    } catch (e) {
+      die(`La lista de cambios no es JSON válido (un array, o un objeto por línea): ${e.message}`)
+    }
+    // "file": ruta → el contenido sale de ese archivo (sin escapar saltos de línea en el JSON).
+    for (const o of ops) {
+      if (typeof o.file === 'string') {
+        if (!existsSync(o.file)) die(`No existe ${o.file}`)
+        o.content = readFileSync(o.file, 'utf8').replace(/^\uFEFF/, '')
+        delete o.file
+      }
+    }
+    const r = await call('POST', '/v1/batch', { path, ops, author: author() })
+    if (opt.json) out(r)
+    else print(`Hecho: ${r.applied} cambio${r.applied === 1 ? '' : 's'} de una vez${r.created ? ' (documento creado)' : ''} · ${r.path} · el usuario lo ve en directo`)
+    break
+  }
+  case 'stream': {
+    const path = file(0)
+    const st = await call('POST', '/v1/stream/start', { path, heading: opt.section, mode: opt.mode, author: author(), summary: opt.summary })
+    let pending = ''
+    let sending = Promise.resolve()
+    let timer = null
+    const flush = () => {
+      timer = null
+      if (!pending) return
+      const text = pending
+      pending = ''
+      sending = sending.then(() => call('POST', '/v1/stream/chunk', { id: st.id, text }))
+    }
+    const push = (t) => {
+      if (!t) return
+      pending += t
+      timer ??= setTimeout(flush, 40)
+    }
+    // --claude: lee la salida de `claude -p … --output-format stream-json --include-partial-messages --verbose`
+    let buf = ''
+    let streamed = false
+    let finalText = ''
+    for await (const chunk of process.stdin) {
+      const t = chunk.toString('utf8')
+      if (!opt.claude) {
+        push(t)
+        continue
+      }
+      buf += t
+      let nl
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl).trim()
+        buf = buf.slice(nl + 1)
+        if (!line) continue
+        try {
+          const ev = JSON.parse(line)
+          const d = ev.type === 'stream_event' && ev.event?.type === 'content_block_delta' ? ev.event.delta : null
+          if (d?.type === 'text_delta') {
+            streamed = true
+            push(d.text)
+          } else if (ev.type === 'result' && typeof ev.result === 'string') finalText = ev.result
+        } catch {
+          /* línea que no es JSON */
+        }
+      }
+    }
+    if (opt.claude && !streamed && finalText) push(finalText)
+    if (timer) clearTimeout(timer)
+    flush()
+    await sending
+    const r = await call('POST', '/v1/stream/end', { id: st.id })
+    opt.json ? out(r) : print(`Escrito en directo: ${r.chars} caracteres · ${r.path}`)
+    break
+  }
+  case 'snapshot': {
+    const r = await call('GET', '/v1/snapshot' + qs({ path: file(0), page: opt.page, width: opt.width, out: typeof opt.out === 'string' ? resolve(opt.out) : undefined }))
+    opt.json ? out(r) : print(r.file)
     break
   }
   case 'skill': {

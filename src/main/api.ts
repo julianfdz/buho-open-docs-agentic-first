@@ -28,6 +28,9 @@ import { app } from 'electron'
  *   POST /v1/restore  {"path","id","author"}         → vuelve a una versión
  *   POST /v1/show     {"path","line"}                → lo enseña en la app (en esa línea)
  *   POST /v1/tag      {"path","author","seconds"}    → firma el próximo cambio en disco
+ *   POST /v1/batch    {"path","ops":[…],"author"}     → varios cambios de una vez (una entrada en el historial)
+ *   POST /v1/stream/start {"path","heading","mode","author"} → id; luego /chunk {"id","text"} y /end {"id"}
+ *   GET  /v1/snapshot?path=&page=&width=&out=        → PNG de una página o diapositiva
  */
 export type ApiCall = (method: string, params: Record<string, unknown>) => Promise<unknown>
 
@@ -51,7 +54,12 @@ const ROUTES: Record<string, string> = {
   'GET /v1/diff': 'diff',
   'POST /v1/restore': 'restore',
   'POST /v1/show': 'show',
-  'POST /v1/tag': 'tag'
+  'POST /v1/tag': 'tag',
+  'POST /v1/batch': 'batch',
+  'POST /v1/stream/start': 'streamStart',
+  'POST /v1/stream/chunk': 'streamChunk',
+  'POST /v1/stream/end': 'streamEnd',
+  'GET /v1/snapshot': 'snapshot'
 }
 
 export const DEFAULT_PORT = 47341

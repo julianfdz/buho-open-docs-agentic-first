@@ -39,6 +39,12 @@ Búho Docs (de Buho Corps Systems) hace **documentos A4** y **presentaciones 16:
 
 **Editar el archivo con tus propias herramientas** (Edit/Write) también vale: la app lo detecta y lo enseña en directo. Firma antes para que el historial diga quién fue: `buho-docs tag <doc> --author Claude` (vale para el siguiente guardado).
 
+**Para ir rápido (lo que más tiempo cuesta son tus turnos, no la app):**
+- **Varios cambios = un solo `batch`.** Cinco erratas o retoques van en una lista JSON y en una llamada (y en una sola entrada del historial). Si uno falla, no se aplica ninguno.
+- **Documentos largos, por bloques**: crea el documento con las primeras secciones y añade el resto con `batch` (2-4 secciones por llamada). El usuario lo ve crecer en vez de esperar al final.
+- **Comprueba en texto, no con imágenes**: `check` dice páginas y avisos. No conviertas el PDF a imágenes. Si de verdad necesitas mirar algo visual, `snapshot --page N` da el PNG de esa página solo.
+- **El PDF ya está hecho**: tras cada cambio la app lo prepara en segundo plano; `export` solo lo escribe (~0,1 s).
+
 ## 3. Comandos
 
 ```bash
@@ -57,8 +63,27 @@ buho-docs export <doc.md> [--out archivo.pdf]   # PDF (por defecto junto al .md)
 buho-docs history <doc.md> | diff <doc.md> [id] | restore <doc.md> <id>
 buho-docs show <doc.md> [--line N]              # llevar al usuario a esa parte
 buho-docs tag <doc.md> --author Claude          # firmar tu próxima edición directa del archivo
+buho-docs batch <doc.md> --file cambios.json    # varios cambios de una vez (crea el .md si no existe)
+buho-docs stream <doc.md> [--section "T"] [--mode body|append|after|write] [--claude] < texto
+buho-docs snapshot <doc.md> [--page N] [--width 900] [--out p.png]   # PNG de una página
 buho-docs docs | templates | status | skill
 ```
+
+`batch`: un array JSON (o un objeto por línea). Cada cambio es como el comando del mismo nombre; el texto va en `content` o, mejor, en `file` (ruta a un .md, sin escapar saltos de línea):
+
+```json
+[
+  {"op": "replace", "find": "efiencia", "replace": "eficiencia"},
+  {"op": "replace", "find": "12,5 %", "replace": "18 %", "all": true},
+  {"op": "section", "heading": "Ventas", "file": "ventas.md", "mode": "body"},
+  {"op": "slide", "n": 3, "file": "diapo3.md", "mode": "replace"},
+  {"op": "meta", "key": "titulo", "value": "Nuevo título"},
+  {"op": "append", "file": "anexo.md"},
+  {"op": "write", "file": "entero.md"}
+]
+```
+
+`stream`: escribe en directo lo que llega por la entrada estándar (al final del documento, en el cuerpo de una sección con `--section`, o el documento entero con `--mode write`). Sirve para encadenar un generador de texto: `claude -p "…" --output-format stream-json --include-partial-messages --verbose | buho-docs stream informe.md --section "Ventas" --claude --author Claude`.
 
 - El texto nuevo va con `--file <ruta>` (recomendado: sin problemas de comillas ni saltos de línea), `--text "…"` (una línea) o `-` (entrada estándar).
 - `section`: busca el título sin importar mayúsculas ni tildes; también `#3` = tercer título de `outline`. `--mode body` (por defecto) mantiene el título y cambia lo de debajo; `replace` cambia también el título; `append` añade al final de la sección; `before`/`after` insertan un bloque nuevo; `delete` la quita. La sección llega hasta el siguiente título de su nivel o superior.

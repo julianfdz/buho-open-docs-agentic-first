@@ -159,3 +159,47 @@ function onDiskChange(path: string, text: string): void {
   const kind = entry?.kind ?? 'external'
   bridge.send('doc-change', { path, content: text, kind, author: entry?.author ?? 'Otro programa', summary: entry?.summary ?? 'Cambiado en disco', focus: kind === 'ai' } satisfies DocChange)
 }
+
+// ─── Escritura en directo (streaming): el texto aparece mientras la IA lo genera ───────────────
+
+const MARK = '\u0000BUHO_STREAM\u0000'
+interface Stream {
+  path: string
+  base: string
+  text: string
+  author: string
+  summary: string
+  last: number
+}
+const streams = new Map<string, Stream>()
+
+/**
+ * Empieza a escribir en directo. `place` construye el documento con una marca donde irá el texto
+ * (al final, en el cuerpo de una sección…). Nada se guarda en disco hasta `streamEnd`.
+ */
+export async function streamStart(path: string, place: (src: string, mark: string) => string, author: string, summary: string): Promise<string> {
+  path = normPath(path)
+  if (!isOpen(path)) openDoc(path, true)
+  const src = await current(path)
+  const base = place(src, MARK)
+  if (!base.includes(MARK)) throw new Error('No se ha podido colocar el texto en el documento')
+  const id = Math.random().toString(36).slice(2, 10)
+  streams.set(id, { path, base, text: '', author, summary, last: 0 })
+  return id
+}
+
+export function streamChunk(id: string, text: string): void {
+  const s = streams.get(id)
+  if (!s) throw new Error('Esa escritura en directo ya ha terminado o no existe')
+  s.text += text
+  bridge.send('doc-change', { path: s.path, content: s.base.replace(MARK, s.text), kind: 'ai', author: s.author, summary: 'escribiendo…', focus: true, streaming: true } satisfies DocChange)
+}
+
+export async function streamEnd(id: string): Promise<{ changed: boolean; content: string; path: string; chars: number }> {
+  const s = streams.get(id)
+  if (!s) throw new Error('Esa escritura en directo ya ha terminado o no existe')
+  streams.delete(id)
+  const final = s.base.replace(MARK, s.text.replace(/\s+$/, ''))
+  const r = await applyChange(s.path, () => final, { kind: 'ai', author: s.author, summary: s.summary })
+  return { ...r, chars: s.text.length }
+}

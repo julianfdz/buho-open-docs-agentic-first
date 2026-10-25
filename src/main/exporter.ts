@@ -16,8 +16,10 @@ function printWindow(): Promise<void> {
   if (win && !win.isDestroyed() && ready) return ready
   win = new BrowserWindow({
     show: false,
-    width: 1300,
-    height: 900,
+    // Cabe una página A4 (794 × 1123 px) o una diapositiva entera: así se puede fotografiar (snapshot).
+    width: 1320,
+    height: 1200,
+    useContentSize: true,
     webPreferences: { sandbox: true, contextIsolation: true, backgroundThrottling: false }
   })
   win.on('closed', () => {
@@ -31,8 +33,12 @@ function printWindow(): Promise<void> {
   return ready
 }
 
+/** Lo que hay pintado ahora mismo en la ventana oculta. */
+let shown: { path: string; source: string } | null = null
+
 async function render(source: string, path: string): Promise<RenderResult> {
   await printWindow()
+  shown = { path, source }
   const req = JSON.stringify({ source, baseDir: dirname(path) })
   return (await win!.webContents.executeJavaScript(`window.buhoRender(${req})`, true)) as RenderResult
 }
@@ -106,6 +112,25 @@ export function exportPdf(source: string, path: string, out: string): Promise<Re
       throw e
     }
     return { ...r.result, file: out, bytes: r.pdf.length, caliente: hot, timings: { ...r.result.timings, pintar: r.pintar, imprimir: r.imprimir } }
+  })
+}
+
+/**
+ * Foto de una página (o diapositiva) en PNG, para que un agente mire algo visual sin convertir el PDF
+ * entero a imágenes. `width` en píxeles (por defecto 900).
+ */
+export function snapshot(source: string, path: string, page: number, width = 900): Promise<{ png: Buffer; pages: number; kind: string }> {
+  return serial(async () => {
+    const result = shown?.path === path && shown.source === source ? (cache.get(key(path))?.result ?? (await render(source, path))) : await render(source, path)
+    const rect = (await win!.webContents.executeJavaScript(
+      // Para la foto, la página se pone arriba a la izquierda y se reduce si no cabe en la ventana.
+      `(() => { const els = document.querySelectorAll('#root > .doc > .pg, #root > .deck > .slide'); const el = els[${Math.max(1, page) - 1}]; if (!el) return null; scrollTo(0, 0); const w = el.offsetWidth; const h = el.offsetHeight; const z = Math.min(1, (innerHeight - 4) / h, (innerWidth - 4) / w); el.dataset.snap = '1'; el.style.cssText += ';position:fixed;left:0;top:0;margin:0;z-index:99999;transform-origin:0 0;transform:scale(' + z + ')'; return { x: 0, y: 0, width: Math.floor(w * z), height: Math.floor(h * z) } })()`
+    )) as Electron.Rectangle | null
+    if (!rect) throw new Error(`No existe la página ${page} (hay ${result.pages})`)
+    await win!.webContents.executeJavaScript('new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))')
+    const img = await win!.webContents.capturePage(rect)
+    await win!.webContents.executeJavaScript("document.querySelectorAll('[data-snap]').forEach((e) => { e.style.position = e.style.left = e.style.top = e.style.margin = e.style.zIndex = e.style.transform = e.style.transformOrigin = ''; delete e.dataset.snap })")
+    return { png: (img.getSize().width > width ? img.resize({ width, quality: 'good' }) : img).toPNG(), pages: result.pages, kind: result.kind }
   })
 }
 
