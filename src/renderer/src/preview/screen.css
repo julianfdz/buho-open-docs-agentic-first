@@ -85,3 +85,16 @@
     break-after: page;
   }
 }
+@media screen {
+  [contenteditable='true'] {
+    outline: none;
+    border-radius: 2px;
+    cursor: text;
+  }
+  [contenteditable='true']:hover {
+    box-shadow: 0 0 0 2px rgba(0, 193, 184, 0.12);
+  }
+  [contenteditable='true']:focus {
+    box-shadow: 0 0 0 2px rgba(0, 193, 184, 0.35);
+  }
+}

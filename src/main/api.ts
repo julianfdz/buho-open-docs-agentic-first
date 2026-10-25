@@ -30,7 +30,12 @@ import { app } from 'electron'
  *   POST /v1/tag      {"path","author","seconds"}    → firma el próximo cambio en disco
  *   POST /v1/batch    {"path","ops":[…],"author"}     → varios cambios de una vez (una entrada en el historial)
  *   POST /v1/stream/start {"path","heading","mode","author"} → id; luego /chunk {"id","text"} y /end {"id"}
- *   GET  /v1/snapshot?path=&page=&width=&out=        → PNG de una página o diapositiva
+ *   GET  /v1/snapshot?path=&pages=1-3,8&width=&out=&dir= → PNG de una o varias páginas (se pinta una vez)
+ *   GET  /v1/bloques                                → bloques prediseñados (y los propios del usuario)
+ *   POST /v1/insertar {"path","bloque"|"content","despues"}
+ *   POST /v1/rellenar {"path","id","content"|"imagen","ancho","alt"} → rellena un hueco
+ *   GET  /v1/huecos?path=                            → huecos pendientes
+ *   POST /v1/indice   {"path","niveles","quitar"}     → índice automático
  */
 export type ApiCall = (method: string, params: Record<string, unknown>) => Promise<unknown>
 
@@ -59,7 +64,12 @@ const ROUTES: Record<string, string> = {
   'POST /v1/stream/start': 'streamStart',
   'POST /v1/stream/chunk': 'streamChunk',
   'POST /v1/stream/end': 'streamEnd',
-  'GET /v1/snapshot': 'snapshot'
+  'GET /v1/snapshot': 'snapshot',
+  'GET /v1/bloques': 'bloques',
+  'POST /v1/insertar': 'insertar',
+  'POST /v1/rellenar': 'rellenar',
+  'GET /v1/huecos': 'huecos',
+  'POST /v1/indice': 'indice'
 }
 
 export const DEFAULT_PORT = 47341

@@ -35,6 +35,10 @@ export interface Built {
   html: string
   /** Cabecera y pie de las páginas A4. */
   chrome?: PageChrome
+  /** Estilo: buho (marca Búho AI) o blanco (sin marca, como un documento de Word). */
+  theme: 'buho' | 'blanco'
+  /** Hoja de estilo propia del documento (cabecera css: archivo.css). */
+  css?: string
   title: string
   warnings: RenderWarning[]
 }
@@ -152,6 +156,15 @@ function makeMd(): MarkdownIt {
   md.renderer.rules.contenedor_open = (tokens: any[], i: number, _o: any, env: Env) => {
     const t = tokens[i]
     const a = t.meta as ReturnType<typeof parseAttrs>
+    if (t.info === 'hueco') {
+      const id = a.kv.id ?? a.id ?? ''
+      const texto = a.kv.texto ?? a.kv.text ?? 'Contenido en preparación'
+      return `<div class="bx bx-hueco" data-line="${t.attrGet('data-line') ?? ''}" data-end="${t.attrGet('data-end') ?? ''}" data-hueco="${escHtml(id)}"><div class="hueco-spin"></div><div><b>${escHtml(texto)}</b><span>Generándose… se rellenará solo (${escHtml(id || 'sin id')})</span></div><div class="bx-body">\n`
+    }
+    if (t.info === 'indice') {
+      const niveles = Number(a.kv.niveles ?? a.classes.find((c) => /^is-\d$/.test(c))?.slice(3)) || 2
+      return `<div class="bx bx-indice" data-line="${t.attrGet('data-line') ?? ''}" data-end="${t.attrGet('data-end') ?? ''}" data-niveles="${niveles}" data-titulo="${escHtml(a.kv.titulo ?? 'Índice')}"><div class="bx-body">\n`
+    }
     if (!(CONTAINERS as readonly string[]).includes(t.info)) env.warnings.push({ line: t.map[0] + 1 + env.lineOffset, level: 'aviso', message: `Bloque desconocido «::: ${t.info}» (hay: ${CONTAINERS.join(', ')})` })
     const cls = [`bx`, `bx-${t.info}`, ...a.classes, ...(tokens[i + 1]?.type === 'col_open' ? ['has-cols'] : [])]
     const icon = a.kv.icon ? iconFor(a.kv.icon, env, t.map[0] + 1) : ''
@@ -184,7 +197,12 @@ function makeMd(): MarkdownIt {
   // data-line en cada bloque (línea del archivo, 1 = primera).
   md.core.ruler.push('lineas', (state: any) => {
     const off = (state.env as Env).lineOffset ?? 0
-    for (const t of state.tokens) if (t.block && t.map && t.nesting !== -1) t.attrSet('data-line', String(t.map[0] + 1 + off))
+    for (const t of state.tokens)
+      if (t.block && t.map && t.nesting !== -1) {
+        t.attrSet('data-line', String(t.map[0] + 1 + off))
+        // Última línea del bloque: la edición visual sustituye exactamente esas líneas.
+        t.attrSet('data-end', String(t.map[1] + off))
+      }
   })
 
   md.renderer.rules.heading_open = (tokens: any[], i: number, opts: any, env: Env, self: any) => {
@@ -198,6 +216,8 @@ function makeMd(): MarkdownIt {
   const defaultImage = md.renderer.rules.image!
   md.renderer.rules.image = (tokens: any[], i: number, opts: any, env: Env, self: any) => {
     const t = tokens[i]
+    // La ruta original queda en data-src: la edición visual la devuelve tal cual al Markdown.
+    t.attrSet('data-src', t.attrGet('src') ?? '')
     t.attrSet('src', fileUrl(t.attrGet('src') ?? '', env.baseDir))
     return defaultImage(tokens, i, opts, env, self)
   }
@@ -225,23 +245,46 @@ function renderMd(src: string, env: Env): string {
 
 // ─── Documento A4 ──────────────────────────────────────────────────────────────────────────────
 
+/** Estilo del documento: `estilo: blanco` quita toda la marca (portada solo si se pide). */
+export function themeOf(meta: Record<string, unknown>): 'buho' | 'blanco' {
+  return /^(blanco|plain|blank|word|limpio|ninguno)$/i.test(metaGet(meta, 'estilo', 'plantilla', 'theme', 'template') ?? '') ? 'blanco' : 'buho'
+}
+
+const cssOf = (meta: Record<string, unknown>, baseDir: string): string | undefined => {
+  const c = metaGet(meta, 'css', 'hoja-de-estilo')
+  return c ? fileUrl(c, baseDir) : undefined
+}
+
+/** Campos de la portada editables en la vista (van a la cabecera YAML). */
+const metaAttr = (k: string): string => ` data-meta="${k}"`
+
 function buildDoc(src: string, baseDir: string): Built {
   const f = splitFront(src)
   const meta = f.meta
   const warnings: RenderWarning[] = f.error ? [{ line: 1, level: 'error', message: f.error }] : []
   const g = (...k: string[]): string | undefined => metaGet(meta, ...k)
+  const theme = themeOf(meta)
   const title = g('titulo', 'título', 'title') ?? ''
   const fecha = g('fecha', 'date') ?? ''
-  const cover = (g('portada', 'cover') ?? 'true') !== 'false'
+  const cover = theme === 'blanco' ? /^(true|s[ií])$/i.test(g('portada', 'cover') ?? '') : (g('portada', 'cover') ?? 'true') !== 'false'
   let html = ''
-  if (cover) {
+  if (cover && theme === 'blanco') {
+    const datos = [fecha, g('autor', 'author'), g('lugar', 'place')].filter(Boolean).join(' · ')
+    html += `<section class="portada portada-blanca" data-line="1">
+  <div class="p-centro">
+    <h1 class="p-titulo"${metaAttr('titulo')}>${md.renderInline(title || 'Sin título')}</h1>
+    ${g('subtitulo', 'subtítulo', 'subtitle') ? `<p class="p-sub"${metaAttr('subtitulo')}>${md.renderInline(g('subtitulo', 'subtítulo', 'subtitle')!)}</p>` : ''}
+    ${datos ? `<div class="p-datos">${escHtml(datos)}</div>` : ''}
+  </div>
+</section>\n`
+  } else if (cover) {
     const datos = [fecha, g('autor', 'author') ?? 'Búho AI', g('lugar', 'place')].filter(Boolean).join(' · ')
     html += `<section class="portada" data-line="1">
   <div class="p-logo"><img src="${wordmark}" alt="Búho AI"><div class="lema">${escHtml(g('lema') ?? 'Tu equipo técnico de IA')}</div></div>
   <div class="p-centro">
     ${g('etiqueta', 'kicker') ? `<div class="etiqueta">${escHtml(g('etiqueta', 'kicker')!)}</div>` : ''}
-    <h1 class="p-titulo">${md.renderInline(title || 'Sin título')}</h1>
-    ${g('subtitulo', 'subtítulo', 'subtitle') ? `<p class="p-sub">${md.renderInline(g('subtitulo', 'subtítulo', 'subtitle')!)}</p>` : ''}
+    <h1 class="p-titulo"${metaAttr('titulo')}>${md.renderInline(title || 'Sin título')}</h1>
+    ${g('subtitulo', 'subtítulo', 'subtitle') ? `<p class="p-sub"${metaAttr('subtitulo')}>${md.renderInline(g('subtitulo', 'subtítulo', 'subtitle')!)}</p>` : ''}
     ${g('destinatario', 'para', 'audience', 'cliente', 'client') ? `<div class="p-para">${escHtml(g('destinatario', 'para', 'audience', 'cliente', 'client')!)}</div>` : ''}
     ${datos ? `<div class="p-datos">${escHtml(datos)}</div>` : ''}
   </div>
@@ -252,10 +295,11 @@ function buildDoc(src: string, baseDir: string): Built {
   }
   html += `<article class="cuerpo">${renderMd(f.body, { lineOffset: f.bodyStart, baseDir, warnings })}</article>`
   const cab = g('cabecera', 'header') ?? [title, fecha].filter(Boolean).join('  |  ')
-  const pie = g('pie', 'footer') ?? 'Búho AI · Tu equipo técnico de IA · buhoai.es'
+  const pie = g('pie', 'footer') ?? (theme === 'blanco' ? '' : 'Búho AI · Tu equipo técnico de IA · buhoai.es')
   const pieDer = g('pie-derecha', 'footer-right')
   const nota = g('nota-pie', 'aviso-pie', 'disclaimer')
-  return { kind: 'documento', meta, html, chrome: { logo: buho, cab, pie, pieDer, nota }, title, warnings }
+  const chrome = theme === 'blanco' ? { logo: '', marca: '', cab, pie, pieDer, nota } : { logo: buho, marca: 'BÚHO AI', cab, pie, pieDer, nota }
+  return { kind: 'documento', meta, html, chrome, theme, css: cssOf(meta, baseDir), title, warnings }
 }
 
 // ─── Presentación 16:9 ─────────────────────────────────────────────────────────────────────────
@@ -290,7 +334,8 @@ function buildSlides(src: string, baseDir: string): Built {
   const warnings: RenderWarning[] = f.error ? [{ line: 1, level: 'error', message: f.error }] : []
   const g = (...k: string[]): string | undefined => metaGet(meta, ...k)
   const title = g('titulo', 'título', 'title') ?? ''
-  const pie = g('pie', 'footer') ?? (title ? `Búho AI · ${title}` : 'Búho AI')
+  const theme = themeOf(meta)
+  const pie = g('pie', 'footer') ?? (theme === 'blanco' ? title : title ? `Búho AI · ${title}` : 'Búho AI')
   const slides = splitSlides(src)
   const total = slides.length
   const out = slides.map((s) => {
@@ -311,7 +356,11 @@ function buildSlides(src: string, baseDir: string): Built {
     const body = nonEmpty.length > 1 ? `<div class="cols n${nonEmpty.length}">${cols}</div>` : nonEmpty.length ? md.render(nonEmpty[0].text, { ...env, lineOffset: nonEmpty[0].line }) : ''
     const img = s.directives.imagen ? `<img class="s-imagen" src="${fileUrl(s.directives.imagen, baseDir)}" alt="">` : ''
     const chrome =
-      layout === 'portada'
+      theme === 'blanco'
+        ? layout === 'portada'
+          ? ''
+          : `<footer class="s-pie"><span>${escHtml(pie)}</span><span class="s-num">${s.n} / ${total}</span></footer>`
+        : layout === 'portada'
         ? `<img class="s-arbol" src="${arbolDeck}" alt=""><div class="s-logo"><img src="${wordmark}" alt="Búho AI"><div class="lema">${escHtml(g('lema') ?? 'Tu equipo técnico de IA')}</div></div><div class="s-web">Búho AI · buhoai.es</div><div class="s-barra-baja"></div>`
         : `<footer class="s-pie"><img src="${buho}" alt=""><span>${escHtml(pie)}</span><span class="s-num">${s.n} / ${total}</span></footer><img class="s-marca" src="${marcaAgua}" alt="">`
     return `<section class="slide d-${layout}${dark ? ' oscuro' : ''}${fondo && !dark ? ` f-${fondo}` : ''}${/^(arriba|top)$/i.test(s.directives.alinear ?? '') ? ' f-arriba' : ''}" data-slide="${s.n}" data-line="${s.start + 1}">
@@ -319,7 +368,7 @@ function buildSlides(src: string, baseDir: string): Built {
 <div class="s-cuerpo">${etiqueta}<div class="s-head">${head}</div><div class="s-main">${img}${body}</div></div>
 ${s.directives.notas ? `<aside class="s-notas">${escHtml(s.directives.notas)}</aside>` : ''}</section>`
   })
-  return { kind: 'presentacion', meta, html: out.join('\n'), title, warnings }
+  return { kind: 'presentacion', meta, html: out.join('\n'), theme, css: cssOf(meta, baseDir), title, warnings }
 }
 
 export function build(src: string, baseDir: string): Built {

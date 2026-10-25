@@ -17,10 +17,12 @@ import {
   X
 } from 'lucide-react'
 import { changedLines } from '@shared/diff'
-import { kindOf, splitFront, titleOf, wordCount } from '@shared/doc'
+import { kindOf, setIndex, splitFront, titleOf, wordCount } from '@shared/doc'
+import { blockText, insertAfter, mergeWithPrevious, replaceBlock, setBlockStyle, splitBlock, type BlockRef, type BlockStyle } from '@shared/visual'
 import { DEFAULT_SETTINGS, type AppInfo, type DocChange, type OpenDoc, type RecentDoc, type RenderResult, type Settings } from '@shared/types'
 import Editor from './components/Editor'
-import Preview from './components/Preview'
+import Preview, { type VisualMsg } from './components/Preview'
+import FormatBar from './components/FormatBar'
 import HistoryPanel from './components/HistoryPanel'
 import logo from './brand/buho.png'
 
@@ -57,6 +59,12 @@ export default function App(): React.JSX.Element {
   const [exporting, setExporting] = useState(false)
   const [info, setInfo] = useState<AppInfo | null>(null)
   const [lastAi, setLastAi] = useState<{ author: string; at: number; writing?: boolean } | null>(null)
+  // Edición visual (sobre la página): bloque con el cursor, cursor tras partir/unir, órdenes de formato.
+  const [block, setBlock] = useState<BlockRef | null>(null)
+  const [pvFocus, setPvFocus] = useState<{ line: number; offset: number; nonce: number } | null>(null)
+  const [pvCmd, setPvCmd] = useState<{ name: string; value?: string; nonce: number } | null>(null)
+  const [, setUndoTick] = useState(0)
+  const undo = useRef(new Map<string, { u: string[]; r: string[]; key: string; at: number }>())
 
   const tabsRef = useRef(tabs)
   tabsRef.current = tabs
@@ -117,6 +125,102 @@ export default function App(): React.JSX.Element {
     [saveNow]
   )
 
+  // ─── Edición visual (como en Word) ───────────────────────────────────────────────────────
+
+  /** Aplica un cambio hecho sobre la página; las rachas de escritura en un mismo bloque son un solo «deshacer». */
+  const commitVisual = useCallback(
+    (next: string, key: string): void => {
+      const path = activeRef.current
+      const tb = tabsRef.current.find((x) => x.path === path)
+      if (!path || !tb || next === tb.content) return
+      const h = undo.current.get(path) ?? { u: [], r: [], key: '', at: 0 }
+      const now = Date.now()
+      if (!(key && key === h.key && now - h.at < 1500)) h.u.push(tb.content)
+      if (h.u.length > 300) h.u.shift()
+      h.r = []
+      h.key = key
+      h.at = now
+      undo.current.set(path, h)
+      onChange(next)
+      setUndoTick((x) => x + 1)
+    },
+    [onChange]
+  )
+
+  const undoRedo = useCallback(
+    (dir: 'u' | 'r'): void => {
+      const path = activeRef.current
+      const tb = tabsRef.current.find((x) => x.path === path)
+      const h = path ? undo.current.get(path) : undefined
+      if (!tb || !h) return
+      const from = dir === 'u' ? h.u : h.r
+      const to = dir === 'u' ? h.r : h.u
+      const prev = from.pop()
+      if (prev === undefined) return
+      to.push(tb.content)
+      h.key = ''
+      onChange(prev)
+      setUndoTick((x) => x + 1)
+    },
+    [onChange]
+  )
+
+  const onVisual = useCallback(
+    (m: VisualMsg): void => {
+      const tb = tabsRef.current.find((x) => x.path === activeRef.current)
+      if (!tb) return
+      switch (m.type) {
+        case 'edit':
+          // Un cambio de formato es un paso propio de «deshacer»; lo que se teclea seguido, uno solo.
+          commitVisual(replaceBlock(tb.content, m.ref, m.text), m.format ? '' : `e${m.ref.meta ?? m.ref.line}:${m.ref.cell ?? ''}`)
+          break
+        case 'split': {
+          const r = splitBlock(tb.content, m.ref, m.before, m.after)
+          commitVisual(r.src, '')
+          setPvFocus({ line: r.focusLine, offset: 0, nonce: ++nonce })
+          break
+        }
+        case 'merge': {
+          const r = mergeWithPrevious(tb.content, m.ref, m.prev, m.text, m.prevText)
+          commitVisual(r.src, '')
+          setPvFocus({ line: r.focusLine, offset: r.offset, nonce: ++nonce })
+          break
+        }
+        case 'focus':
+          setBlock(m.ref)
+          break
+        case 'undo':
+        case 'redo':
+          undoRedo(m.type === 'undo' ? 'u' : 'r')
+          break
+        case 'key':
+          if (m.key === 's') void saveNow(tb.path)
+          else if (m.key === 'p') void doExportRef.current()
+          break
+        case 'caret':
+          setFollowEditor(m.line + Math.random() / 1000)
+          break
+      }
+    },
+    [commitVisual, undoRedo, saveNow]
+  )
+
+  const [followEditor, setFollowEditor] = useState<number | null>(null)
+  const doExportRef = useRef<() => Promise<void>>(async () => {})
+
+  const applyStyle = (style: BlockStyle): void => {
+    if (!tab || !block) return
+    commitVisual(setBlockStyle(tab.content, block, style, blockText(tab.content, block)), '')
+    setPvFocus({ line: block.line + (block.tag === 'li' && style !== 'ul' && style !== 'ol' ? 1 : 0), offset: 0, nonce: ++nonce })
+  }
+  const insertBlock = (md: string): void => {
+    if (!tab) return
+    const after = block && !block.meta ? block.end : tab.content.split(/\r?\n/).length
+    const r = insertAfter(tab.content, after, md)
+    commitVisual(r.src, '')
+    setPvFocus({ line: r.line, offset: 0, nonce: ++nonce })
+  }
+
   // ─── Cambios que llegan de fuera (IA, otros programas, versiones recuperadas) ───────────
 
   const applyChange = useCallback((c: DocChange, force = false): void => {
@@ -155,7 +259,14 @@ export default function App(): React.JSX.Element {
   // ─── Arranque y eventos del proceso principal ──────────────────────────────────────────
 
   useEffect(() => {
-    void window.buho.getSettings().then(setSettings)
+    void window.buho.getSettings().then((st) => {
+      // Desde la 0.4 se escribe sobre la página (como en Word): se cambia una vez la vista guardada.
+      if (!st.vistaPagina) {
+        st = { ...st, view: 'preview', vistaPagina: true }
+        void window.buho.saveSettings(st)
+      }
+      setSettings(st)
+    })
     void window.buho.recent().then(setRecent)
     void window.buho.appInfo().then(setInfo)
     const offs = [
@@ -196,8 +307,8 @@ export default function App(): React.JSX.Element {
     const d = await window.buho.openDialog()
     if (d) addTab(d)
   }
-  const create = async (kind: 'documento' | 'presentacion'): Promise<void> => {
-    const d = await window.buho.create(kind)
+  const create = async (kind: 'documento' | 'presentacion', estilo = 'blanco'): Promise<void> => {
+    const d = await window.buho.create(kind, estilo)
     if (d) addTab(d)
   }
   const openRecent = async (path: string): Promise<void> => {
@@ -215,6 +326,7 @@ export default function App(): React.JSX.Element {
     if (active === path) setActive(rest[rest.length - 1]?.path ?? null)
     if (!rest.length) void window.buho.recent().then(setRecent)
   }
+  doExportRef.current = () => doExport()
   const doExport = async (choose = false): Promise<void> => {
     if (!tab) return
     await saveNow(tab.path)
@@ -292,13 +404,13 @@ export default function App(): React.JSX.Element {
           {tab && (
             <>
               <div className="seg" title="Vista">
-                <button className={view === 'editor' ? 'on' : ''} onClick={() => updateSettings({ view: 'editor' })} title="Solo editor">
+                <button className={view === 'editor' ? 'on' : ''} onClick={() => updateSettings({ view: 'editor' })} title="Solo Markdown">
                   <PanelLeft size={15} />
                 </button>
-                <button className={view === 'split' ? 'on' : ''} onClick={() => updateSettings({ view: 'split' })} title="Editor y vista previa">
+                <button className={view === 'split' ? 'on' : ''} onClick={() => updateSettings({ view: 'split' })} title="Página y Markdown">
                   <Columns2 size={15} />
                 </button>
-                <button className={view === 'preview' ? 'on' : ''} onClick={() => updateSettings({ view: 'preview' })} title="Solo vista previa">
+                <button className={view === 'preview' ? 'on' : ''} onClick={() => updateSettings({ view: 'preview' })} title="Solo la página (escribir como en Word)">
                   <PanelRight size={15} />
                 </button>
               </div>
@@ -319,6 +431,21 @@ export default function App(): React.JSX.Element {
         </div>
       </header>
 
+      {tab && view !== 'editor' && (
+        <FormatBar
+          block={block}
+          kind={kind}
+          canUndo={!!undo.current.get(tab.path)?.u.length}
+          canRedo={!!undo.current.get(tab.path)?.r.length}
+          hasIndex={/^:{3,}\s*indice\b/m.test(tab.content)}
+          onInline={(name, value) => setPvCmd({ name, value, nonce: ++nonce })}
+          onStyle={applyStyle}
+          onInsert={(md) => insertBlock(md)}
+          onIndex={() => commitVisual(setIndex(tab.content, !/^:{3,}\s*indice\b/m.test(tab.content)), '')}
+          onUndo={() => undoRedo('u')}
+          onRedo={() => undoRedo('r')}
+        />
+      )}
       <main className={`work v-${tab ? view : 'home'}`}>
         {!tab ? (
           <Home recent={recent} onCreate={create} onOpen={openDialog} onRecent={openRecent} />
@@ -359,6 +486,7 @@ export default function App(): React.JSX.Element {
                   onChange={onChange}
                   onSave={() => void saveNow(tab.path)}
                   onCursorLine={(l) => setFollow(l)}
+                  followLine={followEditor}
                 />
               </section>
             )}
@@ -369,10 +497,14 @@ export default function App(): React.JSX.Element {
                   baseDir={dirOf(tab.path)}
                   flash={pvFlash}
                   follow={view === 'split' ? follow : null}
+                  editable
+                  focus={pvFocus}
+                  cmd={pvCmd}
+                  onVisual={onVisual}
                   onRendered={setRender}
                   onPick={(m) => {
-                    if (view === 'preview') updateSettings({ view: 'split' })
-                    setJump({ line: m.line, word: m.word, select: m.double, nonce: ++nonce })
+                    // En la vista de solo página no hay Markdown al que saltar.
+                    if (view !== 'preview') setJump({ line: m.line, word: m.word, select: m.double, nonce: ++nonce })
                   }}
                 />
               </section>
@@ -449,26 +581,36 @@ export default function App(): React.JSX.Element {
   )
 }
 
-function Home(p: { recent: RecentDoc[]; onCreate(k: 'documento' | 'presentacion'): void; onOpen(): void; onRecent(path: string): void }): React.JSX.Element {
+function Home(p: { recent: RecentDoc[]; onCreate(k: 'documento' | 'presentacion', estilo: string): void; onOpen(): void; onRecent(path: string): void }): React.JSX.Element {
   return (
     <div className="home">
       <div className="hero">
         <img src={logo} alt="" />
         <div>
           <h1>Búho Docs</h1>
-          <p>Documentos A4 y presentaciones 16:9 con el estilo Búho, escritos en Markdown. Tú corriges, la IA escribe, y lo ves todo en directo.</p>
+          <p>Documentos A4 y presentaciones 16:9. Escribe directamente sobre la página como en Word; la IA escribe por comandos y lo ves todo en directo.</p>
         </div>
       </div>
       <div className="cards">
-        <button className="card" onClick={() => p.onCreate('documento')}>
+        <button className="card" onClick={() => p.onCreate('documento', 'blanco')}>
           <FileText size={28} />
-          <b>Nuevo documento</b>
-          <span>A4 con portada · Ctrl+N</span>
+          <b>Documento en blanco</b>
+          <span>A4 sin marca, como Word · Ctrl+N</span>
         </button>
-        <button className="card" onClick={() => p.onCreate('presentacion')}>
+        <button className="card card-buho" onClick={() => p.onCreate('documento', 'buho')}>
+          <FileText size={28} />
+          <b>Documento Búho</b>
+          <span>A4 con portada y estilo Búho</span>
+        </button>
+        <button className="card" onClick={() => p.onCreate('presentacion', 'blanco')}>
           <Presentation size={28} />
-          <b>Nueva presentación</b>
-          <span>Diapositivas 16:9 · Ctrl+Shift+N</span>
+          <b>Presentación en blanco</b>
+          <span>Diapositivas 16:9 sin marca · Ctrl+Shift+N</span>
+        </button>
+        <button className="card card-buho" onClick={() => p.onCreate('presentacion', 'buho')}>
+          <Presentation size={28} />
+          <b>Presentación Búho</b>
+          <span>Diapositivas 16:9 con estilo Búho</span>
         </button>
         <button className="card" onClick={p.onOpen}>
           <FolderOpen size={28} />

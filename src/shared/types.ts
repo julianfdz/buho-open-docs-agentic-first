@@ -60,9 +60,11 @@ export interface Settings {
   /** Tamaño de letra del editor. */
   fontSize: number
   spellcheck: boolean
+  /** Ya se ha pasado a la vista de página (0.4): solo una vez, luego manda lo que elija la persona. */
+  vistaPagina?: boolean
 }
 
-export const DEFAULT_SETTINGS: Settings = { theme: 'light', autosave: true, view: 'split', fontSize: 14, spellcheck: true }
+export const DEFAULT_SETTINGS: Settings = { theme: 'light', autosave: true, view: 'preview', fontSize: 14, spellcheck: true, vistaPagina: true }
 
 /** Lo que devuelve la vista previa al terminar de pintar. */
 export interface RenderResult {
@@ -100,7 +102,9 @@ export interface BuhoDocsApi {
   recent(): Promise<RecentDoc[]>
   openDialog(): Promise<OpenDoc | null>
   open(path: string): Promise<OpenDoc>
-  create(kind: DocKind): Promise<OpenDoc | null>
+  /** Documento nuevo: estilo buho (marca Búho AI) o blanco (sin marca). */
+  create(kind: DocKind, estilo?: string): Promise<OpenDoc | null>
+  bloques(): Promise<{ carpeta: string; bloques: { id: string; label: string; md: string; propio?: boolean }[] }>
   close(path: string): Promise<void>
   /** Guarda lo escrito en la app (queda en el historial como tuyo). */
   save(path: string, content: string): Promise<{ ok: boolean; error?: string }>

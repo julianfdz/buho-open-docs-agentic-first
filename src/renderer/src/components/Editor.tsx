@@ -100,6 +100,8 @@ interface Props {
   onChange(content: string): void
   onSave(): void
   onCursorLine(line: number): void
+  /** Línea donde está el cursor en la página: el editor la enseña sin quitarle el foco. */
+  followLine?: number | null
 }
 
 const states = new Map<string, EditorState>()
@@ -225,6 +227,14 @@ export default function Editor(p: Props): React.JSX.Element {
     v.dispatch({ selection: { anchor: from, head: to }, effects: EditorView.scrollIntoView(from, { y: 'center' }) })
     v.focus()
   }, [p.jump?.nonce])
+
+  useEffect(() => {
+    const v = view.current
+    if (!v || !p.followLine || v.hasFocus || p.followLine > v.state.doc.lines) return
+    // El cursor del Markdown se coloca en esa línea (sin quitarle el foco a la página).
+    const at = v.state.doc.line(Math.floor(p.followLine)).from
+    v.dispatch({ selection: { anchor: at }, effects: EditorView.scrollIntoView(at, { y: 'center' }), annotations: remote.of(true) })
+  }, [p.followLine])
 
   return <div className="editor" ref={host} />
 }

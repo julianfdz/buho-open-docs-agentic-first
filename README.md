@@ -1,8 +1,8 @@
 # Búho Docs · open docs, agentic first
 
-Documentos **A4** y presentaciones **16:9** en PDF, escritos en Markdown, con el estilo Búho AI. Tú corriges erratas en un editor sencillo; la IA escribe y cambia secciones o diapositivas por comandos; **los dos veis cada cambio en directo** y todo queda en un historial firmado. De Buho Corps Systems.
+Documentos **A4** y presentaciones **16:9** en PDF. **Tú escribes directamente sobre la página, como en Word** (negrita, títulos, listas, bloques); la IA escribe y cambia secciones o diapositivas por comandos, incluso **varias IAs a la vez**; **los dos veis cada cambio en directo** y todo queda en un historial firmado. Con el estilo Búho AI o en blanco, sin marca. De Buho Corps Systems.
 
-![Cambio de la IA en directo](docs/img/cambio-ia.png)
+![Escribir sobre la página, como en Word](docs/img/edicion-visual.png)
 
 ## Por qué
 
@@ -14,7 +14,10 @@ Hacer un PDF bonito con una IA suele ser: pedirlo, esperar a que genere un scrip
 - **Cambios de la IA en directo**: el editor y la vista se actualizan solos y resaltan lo que ha cambiado, sin perder tu cursor ni tu deshacer.
 - **Cambios pequeños**: la IA reescribe una sección, una diapositiva o una cifra (`section`, `slide`, `replace`, `meta`) en vez de regenerarlo todo.
 - **Historial** por documento: quién cambió qué (tú, Claude, Codex, otro programa), con las diferencias y vuelta a cualquier versión.
-- **Erratas en un clic**: haz doble clic en una palabra de la vista previa y el editor la selecciona; corrector ortográfico con sugerencias en el clic derecho.
+- **Escribir como en Word**: el texto se edita sobre la propia página, con barra de formato (estilo de párrafo, negrita, cursiva, tachado, enlace, listas, cita), Intro y Retroceso como siempre, deshacer y corrector ortográfico. El Markdown queda debajo, por si lo quieres ver.
+- **Generación en paralelo**: `buho-docs generar` reparte un plan entre varios modelos que escriben a la vez, en directo, cada uno en su sección o diapositiva (12 secciones en ~25 s).
+- **Bloques prediseñados, índice y huecos**: cajas, tarjetas, tablas, pasos… de un clic; índice automático con números de página; huecos que se rellenan cuando llega una imagen o un texto de otro agente.
+- **Estilos intercambiables**: `estilo: buho` o `estilo: blanco` (sin marca), y `css:` para una hoja de estilo propia.
 
 ## Plantilla Búho
 
@@ -26,7 +29,8 @@ Navy `#0A1F3A` + turquesa `#00C1B8`, Georgia en títulos, Calibri en el texto.
 
 - **Documento**: portada con logo, etiqueta, título y el árbol con el búho; cabecera y pie en cada página; tablas con cabecera navy.
 - **Presentación**: diseños `portada`, `normal`, `seccion`, `cita`, `cierre`, `dos-columnas`, `cifras`, `imagen`; aviso en rojo si una diapositiva no cabe.
-- **Bloques** para los dos: `::: caja`, `::: tarjetas` (con iconos), `::: cifras`, `::: pasos`, `::: columnas`, `::: panel`, `::: nota`, `::: cita`. Iconos de [Lucide](https://lucide.dev) con alias en español (`{icon=cohete}`).
+- **Bloques** para los dos: `::: caja`, `::: tarjetas` (con iconos), `::: cifras`, `::: pasos`, `::: columnas`, `::: panel`, `::: nota`, `::: cita`, `::: indice`, `::: hueco`. Iconos de [Lucide](https://lucide.dev) con alias en español (`{icon=cohete}`).
+- **En blanco**: `estilo: blanco` quita la marca (sin portada salvo `portada: true`, títulos negros, solo el número de página).
 
 Ejemplos: [`examples/beneficios-ia-pymes.md`](examples/beneficios-ia-pymes.md) (documento) y [`examples/beneficios-ia-pymes-slides.md`](examples/beneficios-ia-pymes-slides.md) (presentación), con sus PDF al lado.
 
@@ -63,6 +67,10 @@ buho-docs history "Informe.md"
 buho-docs batch "Informe.md" --file cambios.json        # varios cambios de una vez
 buho-docs snapshot "Informe.md" --page 3              # PNG de una página
 claude -p "…" --output-format stream-json --include-partial-messages --verbose | buho-docs stream "Informe.md" --section "Ventas" --claude
+buho-docs generar "Guia.md" --plan plan.json --paralelo 12   # varias IAs a la vez, en directo
+buho-docs insertar "Informe.md" tarjetas --despues "Ventas"   # bloque ya maquetado
+buho-docs rellenar "Informe.md" grafico --imagen ventas.png    # rellena un hueco cuando llega
+buho-docs indice "Informe.md"                                  # índice con números de página
 buho-docs skill                                        # la guía completa para agentes
 ```
 

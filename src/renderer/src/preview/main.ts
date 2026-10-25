@@ -1,6 +1,7 @@
 import type { RenderResult, RenderWarning } from '@shared/types'
 import { build } from './render'
 import { paginate } from './paginate'
+import { enableEditing, flushEdit, installEditing, releaseHeld, restoreCaret, runCommand, saveCaret, typingRecently } from './visual-edit'
 import buhoCss from './buho.css?raw'
 import './screen.css'
 
@@ -8,8 +9,9 @@ import './screen.css'
  * Página de vista previa. Dos usos:
  *  - Dentro de la app (iframe): recibe el Markdown por postMessage, pinta y avisa de clics (→ línea del editor).
  *  - Exportación (ventana oculta, ?mode=print): la app llama a window.buhoRender() y luego imprime a PDF.
- * Los documentos A4 se paginan con Paged.js (cabeceras, pies, números de página); las presentaciones
- * son diapositivas de tamaño fijo, una por página.
+ * Los documentos A4 se paginan con paginate.ts (cabeceras, pies, números de página); las presentaciones
+ * son diapositivas de tamaño fijo, una por página. En la app, el texto se puede escribir directamente
+ * sobre la página (visual-edit.ts).
  */
 
 interface RenderRequest {
@@ -20,6 +22,10 @@ interface RenderRequest {
   flash?: number[]
   /** Llevar la vista a lo que ha cambiado (cambios de la IA). */
   reveal?: boolean
+  /** Edición visual activada. */
+  editable?: boolean
+  /** Dejar el cursor en esta línea al terminar (tras partir o unir bloques). */
+  focus?: { line: number; offset: number }
 }
 
 declare global {
@@ -85,6 +91,42 @@ function keepWithNext(el: ParentNode): void {
       body.insertBefore(keep, h)
       for (const g of group) keep.appendChild(g)
     }
+  }
+}
+
+// ─── Índice automático (::: indice) ──────────────────────────────────────────────────────────────
+
+/** Rellena los índices con los títulos (antes de paginar, con el hueco del número de página). */
+function fillIndex(el: ParentNode, kind: string): void {
+  for (const ix of el.querySelectorAll<HTMLElement>('.bx-indice')) {
+    const niveles = Number(ix.dataset.niveles) || 2
+    const body = ix.querySelector('.bx-body')!
+    const items: string[] = [`<div class="ix-titulo">${ix.dataset.titulo ?? 'Índice'}</div>`]
+    if (kind === 'presentacion') {
+      for (const s of el.querySelectorAll<HTMLElement>('.slide')) {
+        const h = s.querySelector('.s-head h1, .s-head h2')
+        if (h && !s.contains(ix)) items.push(`<div class="ix-item lv2" data-goto="${s.dataset.line}"><span class="ix-t">${h.textContent}</span><span class="ix-d"></span><span class="ix-n">${s.dataset.slide}</span></div>`)
+      }
+    } else {
+      const sel = ['h1', 'h2', 'h3', 'h4'].slice(0, niveles).map((h) => `.cuerpo > ${h}, .cuerpo > .keep > ${h}`).join(', ')
+      for (const h of el.querySelectorAll<HTMLElement>(sel)) {
+        const lv = Number(h.tagName[1])
+        items.push(`<div class="ix-item lv${lv}" data-goto="${h.dataset.line}"><span class="ix-t">${(h.textContent ?? '').trim()}</span><span class="ix-d"></span><span class="ix-n">00</span></div>`)
+      }
+    }
+    body.innerHTML = items.join('')
+  }
+}
+
+/** Después de paginar: el número de página de cada título. */
+function indexPages(host: HTMLElement): void {
+  const pages = [...host.children] as HTMLElement[]
+  for (const it of host.querySelectorAll<HTMLElement>('.bx-indice .ix-item')) {
+    const line = it.dataset.goto
+    const h = host.querySelector(`.cuerpo [data-line="${line}"]:is(h1, h2, h3, h4)`)
+    const pg = h?.closest('.pg')
+    const n = it.querySelector('.ix-n')
+    if (n && pg) n.textContent = String(pages.indexOf(pg as HTMLElement) + 1)
   }
 }
 
@@ -174,9 +216,28 @@ async function renderNow(req: RenderRequest): Promise<RenderResult> {
   const tpl = document.createElement('template')
   tpl.innerHTML = b.html
   structure(tpl.content)
+  const caret = req.editable ? saveCaret() : null
   const scroll = scrollY
   const next = document.createElement('div')
-  next.className = b.kind === 'presentacion' ? 'deck' : 'doc'
+  const cls = `${b.kind === 'presentacion' ? 'deck' : 'doc'} tema-${b.theme}`
+  next.className = cls
+  // Hoja de estilo propia del documento (cabecera css:).
+  let link = document.head.querySelector<HTMLLinkElement>('link[data-css]')
+  if (b.css) {
+    if (!link) {
+      link = document.createElement('link')
+      link.rel = 'stylesheet'
+      link.dataset.css = '1'
+      document.head.appendChild(link)
+    }
+    if (link.getAttribute('href') !== b.css) {
+      const l = link
+      await new Promise((r) => {
+        l.onload = l.onerror = r
+        l.href = b.css!
+      })
+    }
+  } else link?.remove()
   next.style.cssText = 'position:absolute;left:0;top:0;visibility:hidden;width:100%'
   root.appendChild(next)
   const warnings = [...b.warnings]
@@ -189,6 +250,7 @@ async function renderNow(req: RenderRequest): Promise<RenderResult> {
   ps.textContent = pageRule
   if (b.kind === 'presentacion') {
     next.appendChild(tpl.content)
+    fillIndex(next, 'presentacion')
     await waitImages(next)
     pages = next.querySelectorAll('.slide').length
     pageWidth = 1280
@@ -196,8 +258,9 @@ async function renderNow(req: RenderRequest): Promise<RenderResult> {
     // Las imágenes tienen que haber cargado antes de medir.
     const tmp = document.createElement('div')
     tmp.style.cssText = 'position:absolute;visibility:hidden;width:174mm'
-    tmp.className = 'doc'
+    tmp.className = cls
     tmp.appendChild(tpl.content)
+    fillIndex(tmp, 'documento')
     root.appendChild(tmp)
     await waitImages(tmp)
     await document.fonts.ready
@@ -205,6 +268,7 @@ async function renderNow(req: RenderRequest): Promise<RenderResult> {
     while (tmp.firstChild) frag.appendChild(tmp.firstChild)
     tmp.remove()
     const r = paginate(frag, next, b.chrome!)
+    indexPages(next)
     pages = r.pages
     for (const el of r.tooBig) warnings.push({ line: Number(el.dataset.line) || undefined, level: 'aviso', message: 'Un bloque no cabe ni en una página entera: se corta (pártelo en trozos más pequeños)' })
     pageWidth = 794
@@ -216,6 +280,13 @@ async function renderNow(req: RenderRequest): Promise<RenderResult> {
   next.style.cssText = ''
   current = next
   fit()
+  if (req.editable) {
+    enableEditing(next)
+    if (req.focus) {
+      restoreCaret({ line: req.focus.line, tag: 'any', offset: req.focus.offset })
+      releaseHeld()
+    } else restoreCaret(caret)
+  }
   if (b.kind === 'presentacion') {
     for (const s of next.querySelectorAll<HTMLElement>('.slide')) {
       const main = s.querySelector<HTMLElement>('.s-main')
@@ -237,6 +308,8 @@ let latest = 0
 window.buhoRender = (req) => {
   const n = ++latest
   const run = busy.then(async () => {
+    // Mientras escribes en la página no se repinta (perderías el cursor): espera a que pares.
+    while (!printMode && typingRecently() && !req.focus) await new Promise((r) => setTimeout(r, 90))
     if (n !== latest && !printMode) return null
     return renderNow(req)
   })
@@ -255,6 +328,10 @@ if (!printMode) {
       } catch (err) {
         parent.postMessage({ type: 'rendered', id: m.id, result: { kind: 'documento', pages: 0, ms: 0, warnings: [{ level: 'error', message: `Error al pintar: ${(err as Error).message}` }] } }, '*')
       }
+    } else if (m?.type === 'cmd') {
+      runCommand(m.name, m.value)
+    } else if (m?.type === 'flushEdit') {
+      flushEdit()
     } else if (m?.type === 'scrollTo' && current) {
       const el = blockAt(blocks(current), m.line)
       if (el && m.quiet) {
@@ -269,10 +346,24 @@ if (!printMode) {
       }
     }
   })
+  installEditing()
   // Clic en la vista → la app lleva el editor a esa línea (y a la palabra, para corregir erratas).
   addEventListener('click', (e: MouseEvent) => {
     const a = (e.target as HTMLElement).closest('a')
     if (a) e.preventDefault()
+    // Índice: clic en una entrada → ir a ese título.
+    const ix = (e.target as HTMLElement).closest<HTMLElement>('.ix-item')
+    if (ix && current) {
+      const h = current.querySelector<HTMLElement>(`[data-line="${ix.dataset.goto}"]`)
+      h?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+      return
+    }
+    // Escribiendo en la página: el editor de Markdown sigue al cursor sin robarle el foco.
+    if ((e.target as HTMLElement).closest('[contenteditable="true"]')) {
+      const el = (e.target as HTMLElement).closest<HTMLElement>('[data-line]')
+      if (el) parent.postMessage({ type: 'caret', line: Number(el.dataset.line) }, '*')
+      return
+    }
     const el = (e.target as HTMLElement).closest<HTMLElement>('[data-line]')
     if (!el) return
     let word = ''

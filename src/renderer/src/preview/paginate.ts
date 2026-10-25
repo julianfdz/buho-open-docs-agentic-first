@@ -13,6 +13,8 @@
 
 export interface PageChrome {
   logo: string
+  /** Texto de marca de la cabecera («BÚHO AI»); vacío en el estilo blanco. */
+  marca: string
   cab: string
   pie: string
   pieDer?: string
@@ -24,7 +26,7 @@ const esc = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;'
 function newPage(host: HTMLElement, chrome: PageChrome): HTMLElement {
   const pg = document.createElement('div')
   pg.className = 'pg'
-  pg.innerHTML = `<div class="pg-cab"><span class="pg-marca"><img src="${chrome.logo}" alt="">BÚHO AI</span><span class="pg-tema">${esc(chrome.cab)}</span></div>
+  pg.innerHTML = `<div class="pg-cab"><span class="pg-marca">${chrome.logo ? `<img src="${chrome.logo}" alt="">` : ''}${esc(chrome.marca)}</span><span class="pg-tema">${esc(chrome.cab)}</span></div>
 <div class="pg-cuerpo cuerpo"></div>
 <div class="pg-pie"><span>${esc(chrome.pie)}</span><span class="pg-num">${chrome.pieDer ? esc(chrome.pieDer) + '  ·  ' : ''}<b></b></span></div>${chrome.nota ? `<div class="pg-nota">${esc(chrome.nota)}</div>` : ''}`
   host.appendChild(pg)

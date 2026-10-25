@@ -5,13 +5,15 @@ import { basename, dirname, extname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { DEFAULT_SETTINGS, type ChangeKind, type DocKind, type Settings } from '@shared/types'
-import { applyOps, editSection, editSlide, kindOf, type Op, outline, parseValue, replaceText, setMeta, splitFront, splitSlides, titleOf, type SectionMode, type SlideMode } from '@shared/doc'
+import { applyOps, editSection, editSlide, fillHole, holes, kindOf, type Op, outline, setIndex, parseValue, replaceText, setMeta, splitFront, splitSlides, titleOf, type SectionMode, type SlideMode } from '@shared/doc'
 import { unified } from '@shared/diff'
 import { CONTAINERS, LAYOUTS } from '@shared/syntax'
 import * as docs from './docs'
 import { historyBefore, historyEntry, listHistory, tagNextChange } from './history'
 import { checkDoc, closeExporter, exportPdf, snapshot } from './exporter'
 import { template } from './templates'
+import { BLOCKS, blockById } from '@shared/blocks'
+import { readdirSync } from 'node:fs'
 import { startApi, stopApi } from './api'
 import { syncAgentSkills, type SkillTarget } from './agentSkills'
 
@@ -102,7 +104,7 @@ async function apiCall(method: string, p: Record<string, unknown>): Promise<unkn
       }
     case 'new': {
       const kind: DocKind = /^(presentaci[oó]n|slides?|deck)$/i.test(s('kind') ?? '') ? 'presentacion' : 'documento'
-      const content = s('content') ?? template(kind, s('title'), s('subtitle'))
+      const content = s('content') ?? template(kind, s('title'), s('subtitle'), s('estilo'))
       const d = docs.createDoc(need('path', 'ruta del nuevo .md'), content, s('author') ?? 'IA', 'ai')
       win?.webContents.send('open', d)
       reveal()
@@ -237,12 +239,14 @@ async function apiCall(method: string, p: Record<string, unknown>): Promise<unkn
       const mode = s('mode') ?? (s('heading') ? 'body' : 'append')
       const heading = s('heading')
       if (!existsSync(target)) docs.createDoc(target, '', s('author') ?? 'IA', 'ai')
+      const hueco = s('hueco')
       const place = (src: string, mark: string): string => {
+        if (hueco) return fillHole(src, hueco, mark)
         if (mode === 'write') return mark
         if (heading) return editSection(src, heading, mark, mode as SectionMode)
         return src.replace(/\s*$/, '') + (src.trim() ? '\n\n' : '') + mark + '\n'
       }
-      const id = await docs.streamStart(target, place, s('author') ?? 'IA', s('summary') ?? (heading ? `Sección «${heading}» escrita en directo` : 'Texto escrito en directo'))
+      const id = await docs.streamStart(target, place, s('author') ?? 'IA', s('summary') ?? (hueco ? `Hueco «${hueco}» escrito en directo` : heading ? `Sección «${heading}» escrita en directo` : 'Texto escrito en directo'))
       reveal()
       return { ok: true, id, path: target }
     }
@@ -253,12 +257,56 @@ async function apiCall(method: string, p: Record<string, unknown>): Promise<unkn
       return { ok: true, ...(await docs.streamEnd(need('id', 'id de la escritura'))), content: undefined }
     case 'snapshot': {
       const target = path()
-      const page = Number(s('page')) || 1
-      const shot = await snapshot(await docs.current(target), target, page, Number(s('width')) || 900)
-      const out = s('out') ? resolve(s('out')!) : join(tmpdir(), 'buho-docs', `${basename(target, extname(target))}-p${page}.png`)
-      mkdirSync(dirname(out), { recursive: true })
-      writeFileSync(out, shot.png)
-      return { ok: true, file: out, page, pages: shot.pages, kind: shot.kind, bytes: shot.png.length }
+      // Una página (page) o varias de una vez (pages: "1-3,8" o "todas"): se pinta una sola vez.
+      const spec = s('pages') ?? s('page') ?? '1'
+      const shots = await snapshot(await docs.current(target), target, spec, Number(s('width')) || 900)
+      const dir = s('dir') ? resolve(s('dir')!) : join(tmpdir(), 'buho-docs')
+      const files = shots.images.map((img) => {
+        const out = shots.images.length === 1 && s('out') ? resolve(s('out')!) : join(dir, `${basename(target, extname(target))}-p${img.page}.png`)
+        mkdirSync(dirname(out), { recursive: true })
+        writeFileSync(out, img.png)
+        return { page: img.page, file: out, bytes: img.png.length }
+      })
+      return { ok: true, pages: shots.pages, kind: shots.kind, files, file: files[0]?.file }
+    }
+    case 'bloques': {
+      const userDir = join(app.getPath('userData'), 'bloques')
+      mkdirSync(userDir, { recursive: true })
+      const propios = readdirSync(userDir)
+        .filter((f) => f.endsWith('.md'))
+        .map((f) => ({ id: f.replace(/\.md$/, ''), label: f.replace(/\.md$/, ''), propio: true, md: readFileSync(join(userDir, f), 'utf8') }))
+      return { carpeta: userDir, bloques: [...BLOCKS.map((b) => ({ id: b.id, label: b.label, md: b.md })), ...propios] }
+    }
+    case 'insertar': {
+      const target = path()
+      const id = s('bloque')
+      let content = s('content')
+      if (!content && id) {
+        const userFile = join(app.getPath('userData'), 'bloques', id + '.md')
+        content = blockById(id)?.md ?? (existsSync(userFile) ? readFileSync(userFile, 'utf8') : undefined)
+        if (!content) throw new Error(`No existe el bloque «${id}» (mira buho-docs bloques)`)
+      }
+      if (!content) throw new Error('Falta «bloque» o «content»')
+      const after = s('despues')
+      const c = content
+      return result(await docs.applyChange(target, (src) => applyOps(src, [{ op: 'insert', content: c, after }]).content, ai(`Bloque ${id ?? ''} insertado${after ? ` tras «${after}»` : ''}`)))
+    }
+    case 'rellenar': {
+      const target = path()
+      const id = need('id', 'id del hueco')
+      let content = s('content')
+      const img = s('imagen')
+      if (img) content = `![${s('alt') ?? ''}](${img.replace(/\\/g, '/')})${s('ancho') ? `{width=${s('ancho')}}` : ''}`
+      if (!content) throw new Error('Falta «content» o «imagen»')
+      const c = content
+      return result(await docs.applyChange(target, (src) => fillHole(src, id, c), ai(`Hueco «${id}» rellenado`)))
+    }
+    case 'huecos':
+      return holes(await docs.current(path()))
+    case 'indice': {
+      const on = !(p.quitar === true || p.quitar === 'true')
+      const n = Number(s('niveles')) || 2
+      return result(await docs.applyChange(path(), (src) => setIndex(src, on, n), ai(on ? 'Índice automático' : 'Índice quitado')))
     }
     case 'tag': {
       const target = path()
@@ -353,7 +401,7 @@ function registerIpc(): void {
     return r.canceled ? null : docs.openDoc(r.filePaths[0])
   })
   ipcMain.handle('open', (_e, path: string) => docs.openDoc(path))
-  ipcMain.handle('create', async (_e, kind: DocKind) => {
+  ipcMain.handle('create', async (_e, kind: DocKind, estilo?: string) => {
     const r = await dialog.showSaveDialog(win!, {
       title: kind === 'presentacion' ? 'Nueva presentación' : 'Nuevo documento',
       defaultPath: join(app.getPath('documents'), kind === 'presentacion' ? 'Nueva presentación.md' : 'Nuevo documento.md'),
@@ -361,7 +409,7 @@ function registerIpc(): void {
     })
     if (r.canceled || !r.filePath) return null
     if (existsSync(r.filePath)) return docs.openDoc(r.filePath)
-    return docs.createDoc(r.filePath, template(kind), 'Tú', 'user')
+    return docs.createDoc(r.filePath, template(kind, '', '', estilo), 'Tú', 'user')
   })
   ipcMain.handle('close', (_e, path: string) => docs.closeDoc(path))
   ipcMain.handle('save', (_e, path: string, content: string) => {
@@ -387,6 +435,7 @@ function registerIpc(): void {
     }
   })
   ipcMain.handle('history', (_e, path: string) => listHistory(path, 300))
+  ipcMain.handle('bloques', () => apiCall('bloques', {}))
   ipcMain.handle('historyEntry', (_e, path: string, id: string) => historyEntry(path, id))
   ipcMain.handle('historyBefore', (_e, path: string, id: string) => historyBefore(path, id))
   ipcMain.handle('restore', async (_e, path: string, id: string) => {

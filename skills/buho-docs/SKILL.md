@@ -1,11 +1,11 @@
 ---
 name: buho-docs
-description: Crear y editar documentos PDF (A4, con portada) y presentaciones en PDF (diapositivas 16:9 apaisadas) con el estilo Búho AI usando Búho Docs y su CLI `buho-docs`; se escriben en Markdown y el usuario ve cada cambio en directo con historial firmado. Úsala SIEMPRE que el usuario pida un documento, informe, propuesta, guía, dossier, one-pager, ficha, acta o presentación/deck/diapositivas/slides en PDF, o quiera cambiar, corregir, ampliar o exportar uno de esos .md, aunque no mencione Búho Docs. Vale para cualquier agente con terminal (Claude, Codex, Copilot, Gemini, scripts).
+description: Crear y editar documentos PDF (A4) y presentaciones en PDF (diapositivas 16:9 apaisadas) con Búho Docs y su CLI `buho-docs`, con el estilo Búho AI o en blanco (sin marca); se escriben en Markdown, el usuario los ve y retoca en directo como en Word, y se pueden generar en paralelo con varios modelos. Úsala SIEMPRE que el usuario pida un documento, informe, propuesta, guía, dossier, one-pager, ficha, acta o presentación/deck/diapositivas/slides en PDF, o quiera cambiar, corregir, ampliar o exportar uno de esos .md, aunque no mencione Búho Docs. Vale para cualquier agente con terminal (Claude, Codex, Copilot, Gemini, scripts).
 ---
 
 # Búho Docs · guía para agentes
 
-Búho Docs (de Buho Corps Systems) hace **documentos A4** y **presentaciones 16:9** en PDF con el estilo Búho (navy `#0A1F3A`, turquesa `#00C1B8`, Georgia en títulos, Calibri en el texto, portada con el árbol y el búho). Cada documento es un **archivo Markdown** (`.md`) con una cabecera YAML. El usuario lo tiene abierto en la app: ve tus cambios **en directo y resaltados**, corrige erratas en el editor, y todo queda en el **historial** con tu nombre.
+Búho Docs (de Buho Corps Systems) hace **documentos A4** y **presentaciones 16:9** en PDF, con el estilo Búho (navy `#0A1F3A`, turquesa `#00C1B8`, Georgia y Calibri, portada con el árbol y el búho) o **en blanco** (`estilo: blanco`: sin marca ni portada, como un documento nuevo de Word). Cada documento es un **archivo Markdown** (`.md`) con una cabecera YAML. El usuario lo tiene abierto en la app y **escribe directamente sobre la página** (negrita, títulos, listas…); ve tus cambios **en directo y resaltados**, y todo queda en el **historial** con tu nombre.
 
 - **Agentic first**: todo se hace con el comando `buho-docs`. No hace falta MCP.
 - **Cambia solo lo necesario**: usa `section`, `slide`, `replace`, `meta` en vez de reescribir el documento entero. Es más rápido y el usuario ve exactamente qué has tocado.
@@ -44,6 +44,9 @@ Búho Docs (de Buho Corps Systems) hace **documentos A4** y **presentaciones 16:
 - **Documentos largos, por bloques**: crea el documento con las primeras secciones y añade el resto con `batch` (2-4 secciones por llamada). El usuario lo ve crecer en vez de esperar al final.
 - **Comprueba en texto, no con imágenes**: `check` dice páginas y avisos. No conviertas el PDF a imágenes. Si de verdad necesitas mirar algo visual, `snapshot --page N` da el PNG de esa página solo.
 - **El PDF ya está hecho**: tras cada cambio la app lo prepara en segundo plano; `export` solo lo escribe (~0,1 s).
+- **Lo lento es escribir el texto, no la app.** Para documentos largos o presentaciones, `generar` con un plan: cada sección (o diapositiva) la escribe un modelo distinto **a la vez**, en directo, en su sitio. 12 secciones (~14 páginas) en ~25 s; 8 diapositivas en ~13 s. Tú haces el plan (índice + qué contar en cada parte) y luego repasas con `batch`.
+- **Reutiliza en vez de generar**: `bloques` + `insertar` mete piezas ya maquetadas (cajas, tarjetas, tablas, pasos…); texto que ya existe se pega con `write`/`append` sin volver a generarlo.
+- **No te bloquees esperando**: si una imagen, un gráfico o un texto lo prepara otro agente o una API, pon un `hueco` con id (se ve como «generándose») y sigue; cuando esté, `rellenar <doc> <id> --imagen archivo.png`.
 
 ## 3. Comandos
 
@@ -65,7 +68,11 @@ buho-docs show <doc.md> [--line N]              # llevar al usuario a esa parte
 buho-docs tag <doc.md> --author Claude          # firmar tu próxima edición directa del archivo
 buho-docs batch <doc.md> --file cambios.json    # varios cambios de una vez (crea el .md si no existe)
 buho-docs stream <doc.md> [--section "T"] [--mode body|append|after|write] [--claude] < texto
-buho-docs snapshot <doc.md> [--page N] [--width 900] [--out p.png]   # PNG de una página
+buho-docs snapshot <doc.md> [--pages 1-3,8|todas] [--width 900] [--out p.png | --dir carpeta]   # PNG de páginas (de una vez)
+buho-docs generar <doc.md> --plan plan.json [--modelo haiku] [--paralelo 8]   # secciones/diapositivas en paralelo
+buho-docs bloques | insertar <doc.md> <bloque> [--despues "Título"]           # bloques ya maquetados
+buho-docs huecos <doc.md> | rellenar <doc.md> <id> (--imagen f.png [--ancho 80%] | --file c.md | --text "…")
+buho-docs indice <doc.md> [--niveles 2|3] [--quitar]                         # índice con números de página
 buho-docs docs | templates | status | skill
 ```
 
@@ -81,6 +88,19 @@ buho-docs docs | templates | status | skill
   {"op": "append", "file": "anexo.md"},
   {"op": "write", "file": "entero.md"}
 ]
+```
+
+`generar`: plan en JSON. Documento: `secciones`; presentación: `diapositivas` (con `diseno` y `etiqueta` opcionales). Crea el documento si no existe (o añade al final), pone un hueco por parte y lanza un `claude -p` por cada una, `--paralelo` a la vez:
+
+```json
+{
+  "tipo": "documento", "estilo": "buho", "titulo": "Guía de IA para el equipo", "subtitulo": "…", "etiqueta": "…",
+  "contexto": "para quién es, tono, datos del cliente…", "palabras": 500,
+  "secciones": [
+    {"titulo": "1. Qué es la IA generativa", "pide": "explicación sencilla, qué hace bien y qué no"},
+    {"titulo": "2. Herramientas", "pide": "…", "palabras": 700}
+  ]
+}
 ```
 
 `stream`: escribe en directo lo que llega por la entrada estándar (al final del documento, en el cuerpo de una sección con `--section`, o el documento entero con `--mode write`). Sirve para encadenar un generador de texto: `claude -p "…" --output-format stream-json --include-partial-messages --verbose | buho-docs stream informe.md --section "Ventas" --claude --author Claude`.
@@ -119,6 +139,10 @@ Texto…
 - Las tablas Markdown salen con cabecera navy. Las imágenes: `![](imagen.png)` (ruta relativa al `.md`) y `{width=60%}` al final del párrafo para el ancho.
 - Comillas: escribe «» o "" (las rectas se convierten en «»).
 
+**Estilo**: `estilo: buho` (por defecto) o `estilo: blanco` (sin marca ni portada; `portada: true` pone una portada sencilla). `css: mi-estilo.css` añade una hoja de estilo propia (ruta relativa al .md). Con `new --estilo blanco` se crea en blanco.
+
+**Índice**: `buho-docs indice <doc>` mete al principio un índice automático con los títulos y su número de página (se actualiza solo).
+
 ## 5. Bloques (documentos y diapositivas)
 
 ```markdown
@@ -156,6 +180,10 @@ Introducción a la IA
 :::
 
 ::: nota                          # texto pequeño gris (fuentes, aclaraciones)
+::: hueco id=grafico texto="Gráfico de ventas"   # se rellena después con rellenar (no bloquea)
+:::
+::: indice niveles=2              # índice automático con números de página
+:::
 ::: cita                          # cita grande en Georgia
 ```
 

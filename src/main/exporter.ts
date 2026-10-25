@@ -119,19 +119,43 @@ export function exportPdf(source: string, path: string, out: string): Promise<Re
  * Foto de una página (o diapositiva) en PNG, para que un agente mire algo visual sin convertir el PDF
  * entero a imágenes. `width` en píxeles (por defecto 900).
  */
-export function snapshot(source: string, path: string, page: number, width = 900): Promise<{ png: Buffer; pages: number; kind: string }> {
+/** «3», «1-4,8» o «todas» → números de página. */
+function parsePages(spec: string, total: number): number[] {
+  if (/^(todas|all|\*)$/i.test(spec.trim())) return Array.from({ length: total }, (_, i) => i + 1)
+  const out = new Set<number>()
+  for (const part of spec.split(',')) {
+    const m = part.trim().match(/^(\d+)(?:\s*-\s*(\d+))?$/)
+    if (!m) continue
+    const a = Number(m[1])
+    const b = m[2] ? Number(m[2]) : a
+    for (let i = Math.min(a, b); i <= Math.max(a, b); i++) if (i >= 1 && i <= total) out.add(i)
+  }
+  return [...out].sort((x, y) => x - y)
+}
+
+export function snapshot(source: string, path: string, spec: string, width = 900): Promise<{ images: { page: number; png: Buffer }[]; pages: number; kind: string }> {
   return serial(async () => {
     const result = shown?.path === path && shown.source === source ? (cache.get(key(path))?.result ?? (await render(source, path))) : await render(source, path)
+    const list = parsePages(spec, result.pages)
+    if (!list.length) throw new Error(`No hay páginas «${spec}» (el documento tiene ${result.pages})`)
+    const images: { page: number; png: Buffer }[] = []
+    for (const page of list) images.push({ page, png: await capture(page, width, result.pages) })
+    return { images, pages: result.pages, kind: result.kind }
+  })
+}
+
+async function capture(page: number, width: number, total: number): Promise<Buffer> {
+  {
     const rect = (await win!.webContents.executeJavaScript(
       // Para la foto, la página se pone arriba a la izquierda y se reduce si no cabe en la ventana.
       `(() => { const els = document.querySelectorAll('#root > .doc > .pg, #root > .deck > .slide'); const el = els[${Math.max(1, page) - 1}]; if (!el) return null; scrollTo(0, 0); const w = el.offsetWidth; const h = el.offsetHeight; const z = Math.min(1, (innerHeight - 4) / h, (innerWidth - 4) / w); el.dataset.snap = '1'; el.style.cssText += ';position:fixed;left:0;top:0;margin:0;z-index:99999;transform-origin:0 0;transform:scale(' + z + ')'; return { x: 0, y: 0, width: Math.floor(w * z), height: Math.floor(h * z) } })()`
     )) as Electron.Rectangle | null
-    if (!rect) throw new Error(`No existe la página ${page} (hay ${result.pages})`)
+    if (!rect) throw new Error(`No existe la página ${page} (hay ${total})`)
     await win!.webContents.executeJavaScript('new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))')
     const img = await win!.webContents.capturePage(rect)
     await win!.webContents.executeJavaScript("document.querySelectorAll('[data-snap]').forEach((e) => { e.style.position = e.style.left = e.style.top = e.style.margin = e.style.zIndex = e.style.transform = e.style.transformOrigin = ''; delete e.dataset.snap })")
-    return { png: (img.getSize().width > width ? img.resize({ width, quality: 'good' }) : img).toPNG(), pages: result.pages, kind: result.kind }
-  })
+    return (img.getSize().width > width ? img.resize({ width, quality: 'good' }) : img).toPNG()
+  }
 }
 
 export function closeExporter(): void {

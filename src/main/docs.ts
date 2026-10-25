@@ -161,45 +161,99 @@ function onDiskChange(path: string, text: string): void {
 }
 
 // ─── Escritura en directo (streaming): el texto aparece mientras la IA lo genera ───────────────
+//
+// Varias escrituras a la vez en el mismo documento (generación en paralelo): cada una tiene su marca
+// en una «base» común; lo que se enseña es la base con cada marca sustituida por lo que lleva escrito.
+// Nada se guarda en disco hasta que termina la última.
 
-const MARK = '\u0000BUHO_STREAM\u0000'
-interface Stream {
+interface Live {
   path: string
   base: string
-  text: string
+  texts: Map<string, string>
+  active: Set<string>
   author: string
   summary: string
-  last: number
+  timer: NodeJS.Timeout | null
 }
-const streams = new Map<string, Stream>()
+const lives = new Map<string, Live>()
+const streams = new Map<string, { key: string; mark: string }>()
+const starting = new Map<string, Promise<void>>()
+let seq = 0
+
+function compose(l: Live): string {
+  let s = l.base
+  for (const [mark, text] of l.texts) s = s.replace(mark, text)
+  return s
+}
+
+/** Las actualizaciones se agrupan (cada 60 ms) para no saturar la ventana con muchas IAs a la vez. */
+function scheduleSend(l: Live): void {
+  if (l.timer) return
+  l.timer = setTimeout(() => {
+    l.timer = null
+    bridge.send('doc-change', { path: l.path, content: compose(l), kind: 'ai', author: l.author, summary: 'escribiendo…', focus: true, streaming: true } satisfies DocChange)
+  }, 60)
+}
 
 /**
- * Empieza a escribir en directo. `place` construye el documento con una marca donde irá el texto
- * (al final, en el cuerpo de una sección…). Nada se guarda en disco hasta `streamEnd`.
+ * Empieza a escribir en directo. `place` coloca la marca donde irá el texto (al final, en una sección,
+ * en un hueco…). Se puede llamar varias veces seguidas para escribir en paralelo.
  */
 export async function streamStart(path: string, place: (src: string, mark: string) => string, author: string, summary: string): Promise<string> {
   path = normPath(path)
   if (!isOpen(path)) openDoc(path, true)
-  const src = await current(path)
-  const base = place(src, MARK)
-  if (!base.includes(MARK)) throw new Error('No se ha podido colocar el texto en el documento')
+  const k = key(path)
+  // Muchas escrituras pueden empezar a la vez: el estado del documento se crea una sola vez.
+  let ready = starting.get(k)
+  if (!lives.has(k) && !ready) {
+    ready = current(path).then((base) => {
+      lives.set(k, { path, base, texts: new Map(), active: new Set(), author, summary, timer: null })
+      starting.delete(k)
+    })
+    starting.set(k, ready)
+  }
+  if (ready) await ready
+  const l = lives.get(k)!
+  const mark = `\u0000BUHO_STREAM_${++seq}\u0000`
+  const base = place(l.base, mark)
+  if (!base.includes(mark)) throw new Error('No se ha podido colocar el texto en el documento')
+  l.base = base
+  l.texts.set(mark, '')
+  l.active.add(mark)
+  if (l.active.size > 1) l.summary = `${l.active.size} textos escritos en paralelo`
   const id = Math.random().toString(36).slice(2, 10)
-  streams.set(id, { path, base, text: '', author, summary, last: 0 })
+  streams.set(id, { key: k, mark })
   return id
 }
 
 export function streamChunk(id: string, text: string): void {
-  const s = streams.get(id)
-  if (!s) throw new Error('Esa escritura en directo ya ha terminado o no existe')
-  s.text += text
-  bridge.send('doc-change', { path: s.path, content: s.base.replace(MARK, s.text), kind: 'ai', author: s.author, summary: 'escribiendo…', focus: true, streaming: true } satisfies DocChange)
+  const st = streams.get(id)
+  const l = st && lives.get(st.key)
+  if (!st || !l) throw new Error('Esa escritura en directo ya ha terminado o no existe')
+  l.texts.set(st.mark, (l.texts.get(st.mark) ?? '') + text)
+  scheduleSend(l)
 }
 
-export async function streamEnd(id: string): Promise<{ changed: boolean; content: string; path: string; chars: number }> {
-  const s = streams.get(id)
-  if (!s) throw new Error('Esa escritura en directo ya ha terminado o no existe')
+export async function streamEnd(id: string): Promise<{ changed: boolean; path: string; chars: number; pending: number }> {
+  const st = streams.get(id)
+  const l = st && lives.get(st.key)
+  if (!st || !l) throw new Error('Esa escritura en directo ya ha terminado o no existe')
   streams.delete(id)
-  const final = s.base.replace(MARK, s.text.replace(/\s+$/, ''))
-  const r = await applyChange(s.path, () => final, { kind: 'ai', author: s.author, summary: s.summary })
-  return { ...r, chars: s.text.length }
+  // Sin las vallas de código con que algunos modelos envuelven la respuesta.
+  const text = (l.texts.get(st.mark) ?? '')
+    .replace(/^\s*```(?:markdown|md)?[ \t]*\r?\n/, '')
+    .replace(/\r?\n```\s*$/, '')
+    .replace(/\s+$/, '')
+  l.base = l.base.replace(st.mark, text)
+  l.texts.delete(st.mark)
+  l.active.delete(st.mark)
+  if (l.active.size) {
+    scheduleSend(l)
+    return { changed: true, path: l.path, chars: text.length, pending: l.active.size }
+  }
+  if (l.timer) clearTimeout(l.timer)
+  lives.delete(st.key)
+  const final = l.base
+  const r = await applyChange(l.path, () => final, { kind: 'ai', author: l.author, summary: l.summary })
+  return { changed: r.changed, path: r.path, chars: text.length, pending: 0 }
 }

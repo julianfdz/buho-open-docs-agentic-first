@@ -933,3 +933,174 @@ tr,
   align-items: center;
   justify-content: center;
 }
+
+/* ─── Índice automático ─────────────────────────────────────────────────────────── */
+.bx-indice {
+  margin: 0.5em 0 1.2em;
+}
+.ix-titulo {
+  font-family: var(--serif);
+  font-weight: 700;
+  color: var(--navy);
+  font-size: 1.45em;
+  margin-bottom: 0.6em;
+}
+.ix-item {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4em;
+  padding: 0.18em 0;
+  cursor: pointer;
+}
+.ix-item.lv1,
+.ix-item.lv2 {
+  font-weight: 700;
+  color: var(--navy);
+}
+.ix-item.lv3 {
+  padding-left: 1.4em;
+  color: var(--texto);
+}
+.ix-item.lv4 {
+  padding-left: 2.8em;
+  color: var(--gris);
+}
+.ix-d {
+  flex: 1;
+  border-bottom: 1px dotted #b6c0cc;
+  transform: translateY(-0.25em);
+}
+.ix-n {
+  color: var(--turq-d);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ─── Hueco: contenido que llega más tarde (imagen, gráfico, texto de otro agente) ── */
+.bx-hueco {
+  display: flex;
+  align-items: center;
+  gap: 1em;
+  border: 2px dashed #b6c0cc;
+  border-radius: 10px;
+  padding: 1.2em 1.4em;
+  margin: 0.9em 0;
+  color: var(--gris);
+  background: repeating-linear-gradient(135deg, #fafbfc, #fafbfc 10px, #f3f6f9 10px, #f3f6f9 20px);
+}
+.bx-hueco b {
+  display: block;
+  color: var(--navy);
+}
+.bx-hueco span {
+  font-size: 0.85em;
+}
+.bx-hueco > .bx-body {
+  display: none;
+}
+.hueco-spin {
+  width: 1.6em;
+  height: 1.6em;
+  flex: none;
+  border-radius: 50%;
+  border: 3px solid #d7dee6;
+  border-top-color: var(--turq);
+  animation: hueco-gira 0.9s linear infinite;
+}
+@keyframes hueco-gira {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media print {
+  .hueco-spin {
+    animation: none;
+  }
+}
+
+/* ─── Estilo blanco: sin marca, como un documento de Word ───────────────────────── */
+.tema-blanco {
+  --navy: #111111;
+  --turq: #444444;
+  --turq-d: #333333;
+  --turq-l: #f3f3f3;
+  --azul-l: #f6f6f6;
+  --texto: #111111;
+  --gris: #666666;
+  --linea: #dddddd;
+  --serif: Calibri, Carlito, 'Segoe UI', Arial, sans-serif;
+  --sans: Calibri, Carlito, 'Segoe UI', Arial, sans-serif;
+}
+.tema-blanco .pg::before,
+.tema-blanco .s-barra,
+.tema-blanco .s-marca,
+.tema-blanco .portada::before {
+  display: none;
+}
+.tema-blanco .pg-cab {
+  border-bottom: 0;
+  justify-content: flex-end;
+}
+.tema-blanco .pg-pie {
+  border-top: 0;
+}
+.tema-blanco thead th {
+  background: #eeeeee;
+  color: #111;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.tema-blanco .ic {
+  background: #333;
+}
+.tema-blanco .tarjeta,
+.tema-blanco .tarjeta:nth-child(even) {
+  background: #fff;
+  border: 1px solid #ddd;
+  box-shadow: none;
+}
+.tema-blanco .bx-caja {
+  border-left-color: #999;
+}
+.tema-blanco .bx-panel,
+.tema-blanco .bx-caja.is-navy,
+.tema-blanco .slide.oscuro {
+  background: #222;
+}
+.tema-blanco ul > li::marker,
+.tema-blanco ol > li::marker {
+  color: inherit;
+}
+.portada-blanca .p-centro {
+  top: 100mm;
+}
+.tema-blanco .doc .cuerpo h2,
+.tema-blanco.doc .cuerpo h2 {
+  font-size: 15pt;
+}
+
+/* Tarjetas y cajas claras dentro de diapositivas oscuras: el texto vuelve a navy. */
+.slide.oscuro .tarjeta h3,
+.slide.oscuro .tarjeta strong {
+  color: var(--navy);
+}
+.slide.oscuro .tarjeta p {
+  color: #33475e;
+}
+.slide.oscuro .bx-caja:not(.is-navy) {
+  color: var(--texto);
+}
+.slide.oscuro .bx-caja:not(.is-navy) strong {
+  color: var(--navy);
+}
+/* Viñetas de diapositiva: más grandes, que se lean de lejos. */
+.deck .s-main > ul,
+.deck .s-main > ol,
+.deck .col > ul,
+.deck .col > ol {
+  font-size: 24px;
+  line-height: 1.45;
+}
+.deck .s-main > ul > li,
+.deck .s-main > ol > li {
+  margin: 0.4em 0;
+}

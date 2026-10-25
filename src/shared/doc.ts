@@ -335,7 +335,10 @@ export function wordCount(src: string): number {
 // ─── Lotes: varios cambios en una sola llamada (y una sola entrada del historial) ───────────────
 
 export interface Op {
-  op: 'write' | 'replace' | 'section' | 'slide' | 'append' | 'meta'
+  op: 'write' | 'replace' | 'section' | 'slide' | 'append' | 'meta' | 'fill' | 'insert' | 'index'
+  id?: string
+  after?: string
+  block?: string
   content?: string
   find?: string
   replace?: string
@@ -379,6 +382,21 @@ export function applyOps(src: string, ops: Op[]): { content: string; labels: str
           s = setMeta(s, o.key ?? '', typeof o.value === 'string' ? parseValue(o.value) : o.value)
           labels.push(`cabecera ${o.key}`)
           break
+        case 'fill':
+          s = fillHole(s, o.id ?? '', o.content ?? '')
+          labels.push(`hueco «${o.id}» rellenado`)
+          break
+        case 'index':
+          s = setIndex(s, o.value !== false, Number(o.n) || 2)
+          labels.push('índice')
+          break
+        case 'insert': {
+          const c = o.content ?? ''
+          if (o.after) s = editSection(s, o.after, c, 'after')
+          else s = s.replace(/\s*$/, '') + '\n\n' + c.replace(/\s*$/, '') + '\n'
+          labels.push(`bloque insertado${o.after ? ` tras «${o.after}»` : ''}`)
+          break
+        }
         default:
           throw new Error(`operación desconocida «${(o as { op: string }).op}» (write, replace, section, slide, append, meta)`)
       }
@@ -387,4 +405,53 @@ export function applyOps(src: string, ops: Op[]): { content: string; labels: str
     }
   })
   return { content: s, labels }
+}
+
+// ─── Huecos: contenido que llega más tarde ─────────────────────────────────────────────────────
+
+/** Huecos pendientes (`::: hueco id=…`) con su línea. */
+export function holes(src: string): { id: string; line: number; texto: string }[] {
+  const out: { id: string; line: number; texto: string }[] = []
+  src.split(/\r?\n/).forEach((l, i) => {
+    const m = l.match(/^:{3,}\s*hueco\b(.*)$/)
+    if (!m) return
+    const id = m[1].match(/(?:^|\s)id=(?:"([^"]*)"|(\S+))/)
+    const texto = m[1].match(/(?:^|\s)texto=(?:"([^"]*)"|(\S+))/)
+    out.push({ id: id ? (id[1] ?? id[2]) : '', line: i + 1, texto: texto ? (texto[1] ?? texto[2]) : '' })
+  })
+  return out
+}
+
+/** Sustituye el hueco `id` (de `::: hueco` a su `:::`) por el contenido. */
+export function fillHole(src: string, id: string, content: string): string {
+  const nl = src.includes('\r\n') ? '\r\n' : '\n'
+  const ls = src.split(/\r?\n/)
+  const h = holes(src).find((x) => x.id === id)
+  if (!h) throw new Error(`No hay ningún hueco «${id}» (huecos: ${holes(src).map((x) => x.id).join(', ') || 'ninguno'})`)
+  let end = h.line
+  while (end < ls.length && !/^:{3,}\s*$/.test(ls[end])) end++
+  ls.splice(h.line - 1, end - h.line + 2, ...content.replace(/\r\n/g, '\n').replace(/\s+$/, '').split('\n'))
+  return ls.join(nl)
+}
+
+/** Inserta (o quita) el índice automático al principio del cuerpo. */
+export function setIndex(src: string, on: boolean, niveles = 2): string {
+  const nl = src.includes('\r\n') ? '\r\n' : '\n'
+  const ls = src.split(/\r?\n/)
+  const i = ls.findIndex((l) => /^:{3,}\s*indice\b/.test(l))
+  if (i >= 0) {
+    let end = i + 1
+    while (end < ls.length && !/^:{3,}\s*$/.test(ls[end])) end++
+    ls.splice(i, end - i + 1)
+    // El salto de página que separa el índice del texto también sobra.
+    let k = i
+    while (ls[k] !== undefined && ls[k].trim() === '') k++
+    if (/^\\(pagebreak|newpage|salto)\s*$/.test(ls[k] ?? '')) ls.splice(k, 1)
+    while (ls[i] !== undefined && ls[i].trim() === '' && ls[i - 1]?.trim() === '') ls.splice(i, 1)
+  }
+  if (on) {
+    const f = splitFront(ls.join('\n'))
+    ls.splice(f.bodyStart, 0, '', `::: indice niveles=${niveles}`, ':::', '', '\\pagebreak', '')
+  }
+  return ls.join(nl).replace(/(\r?\n){3,}/g, nl + nl)
 }

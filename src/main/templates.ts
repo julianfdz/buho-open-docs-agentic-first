@@ -11,8 +11,14 @@ export const fechaHoy = (): string => {
 
 const q = (s: string): string => JSON.stringify(s)
 
-export function template(kind: DocKind, title = '', subtitle = ''): string {
+export function template(kind: DocKind, title = '', subtitle = '', estilo = 'buho'): string {
   const fecha = fechaHoy()
+  // Estilo blanco: como un documento nuevo de Word, sin marca ni portada.
+  if (/^(blanco|plain|blank|word)$/i.test(estilo)) {
+    const t = title || (kind === 'presentacion' ? 'Presentación sin título' : 'Documento sin título')
+    if (kind === 'presentacion') return `---\ntipo: presentacion\nestilo: blanco\ntitulo: ${q(t)}\n---\n\n# ${t}\n\n${subtitle || 'Subtítulo'}\n\n---\n\n## Primera diapositiva\n\n- Primer punto\n- Segundo punto\n`
+    return `---\ntipo: documento\nestilo: blanco\ntitulo: ${q(t)}\n---\n\n# ${t}\n\n${subtitle || 'Empieza a escribir aquí.'}\n`
+  }
   if (kind === 'presentacion') {
     const t = title || 'Título de la presentación'
     return `---

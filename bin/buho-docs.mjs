@@ -24,7 +24,12 @@
  *   buho-docs batch <archivo.md> --file cambios.json  (varios cambios de una vez; crea el .md si no existe)
  *   buho-docs stream <archivo.md> [--section "Título"] [--mode body|append|after|write] [--claude] < texto
  *                                                   (el texto aparece en directo mientras llega)
- *   buho-docs snapshot <archivo.md> [--page N] [--width 900] [--out pagina.png]   (foto de una página)
+ *   buho-docs snapshot <archivo.md> [--pages 1-3,8|todas] [--width 900] [--out p.png | --dir carpeta]   (fotos de páginas)
+ *   buho-docs generar <archivo.md> --plan plan.json [--modelo haiku] [--paralelo 8]   (secciones o diapositivas
+ *                                                   escritas a la vez por varios modelos, en directo)
+ *   buho-docs bloques | insertar <archivo.md> <bloque> [--despues "Título"]   (bloques ya maquetados)
+ *   buho-docs huecos <archivo.md> | rellenar <archivo.md> <id> (--imagen foto.png | --file contenido.md)
+ *   buho-docs indice <archivo.md> [--niveles 2|3] [--quitar]   (índice automático con números de página)
  *
  * El texto nuevo se pasa con --file <ruta>, con --text "…" o con - (entrada estándar).
  * Opciones globales: --author <nombre> (firma en el historial), --json, --no-launch.
@@ -44,7 +49,7 @@ function die(msg, code = 1) {
   process.exit(code)
 }
 
-const FLAGS = new Set(['all', 'lines', 'json', 'no-launch', 'stdin', 'path', 'help', 'claude'])
+const FLAGS = new Set(['all', 'lines', 'json', 'no-launch', 'stdin', 'path', 'help', 'claude', 'quitar'])
 function parseArgs(argv) {
   const pos = []
   const opt = {}
@@ -162,6 +167,51 @@ async function content(i, required = true) {
 
 const author = () => (typeof opt.author === 'string' ? opt.author : undefined)
 
+/** Lee la salida stream-json de `claude -p` y manda el texto a una escritura en directo (cada 40 ms). */
+async function pipeClaude(input, id) {
+  let pending = ''
+  let sending = Promise.resolve()
+  let timer = null
+  const flush = () => {
+    timer = null
+    if (!pending) return
+    const text = pending
+    pending = ''
+    sending = sending.then(() => call('POST', '/v1/stream/chunk', { id, text }))
+  }
+  const push = (t) => {
+    if (!t) return
+    pending += t
+    timer ??= setTimeout(flush, 40)
+  }
+  let buf = ''
+  let streamed = false
+  let finalText = ''
+  for await (const chunk of input) {
+    buf += chunk.toString('utf8')
+    let nl
+    while ((nl = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, nl).trim()
+      buf = buf.slice(nl + 1)
+      if (!line) continue
+      try {
+        const ev = JSON.parse(line)
+        const d = ev.type === 'stream_event' && ev.event?.type === 'content_block_delta' ? ev.event.delta : null
+        if (d?.type === 'text_delta') {
+          streamed = true
+          push(d.text)
+        } else if (ev.type === 'result' && typeof ev.result === 'string') finalText = ev.result
+      } catch {
+        /* línea que no es JSON */
+      }
+    }
+  }
+  if (!streamed && finalText) push(finalText)
+  if (timer) clearTimeout(timer)
+  flush()
+  await sending
+}
+
 function changed(r) {
   if (opt.json) return out(r)
   print(r.changed === false ? r.message ?? 'Sin cambios' : `Hecho${r.replaced ? ` (${r.replaced} cambio${r.replaced > 1 ? 's' : ''})` : ''} · ${r.path} · ${r.lines ?? ''} líneas · el usuario lo ve en directo`)
@@ -189,7 +239,7 @@ switch (cmd) {
   case 'new': {
     const path = file(0, 'archivo .md nuevo')
     const c = await content(1, false)
-    const r = await call('POST', '/v1/new', { path, kind: opt.kind, title: opt.title, subtitle: opt.subtitle, content: c, author: author() })
+    const r = await call('POST', '/v1/new', { path, kind: opt.kind, title: opt.title, subtitle: opt.subtitle, estilo: opt.estilo, content: c, author: author() })
     opt.json ? out(r) : print(`Creado ${r.path} (${r.kind}) y abierto en Búho Docs`)
     break
   }
@@ -348,6 +398,12 @@ switch (cmd) {
       pending += t
       timer ??= setTimeout(flush, 40)
     }
+    if (opt.claude) {
+      await pipeClaude(process.stdin, st.id)
+      const r = await call('POST', '/v1/stream/end', { id: st.id })
+      opt.json ? out(r) : print(`Escrito en directo: ${r.chars} caracteres · ${r.path}`)
+      break
+    }
     // --claude: lee la salida de `claude -p … --output-format stream-json --include-partial-messages --verbose`
     let buf = ''
     let streamed = false
@@ -385,8 +441,112 @@ switch (cmd) {
     break
   }
   case 'snapshot': {
-    const r = await call('GET', '/v1/snapshot' + qs({ path: file(0), page: opt.page, width: opt.width, out: typeof opt.out === 'string' ? resolve(opt.out) : undefined }))
-    opt.json ? out(r) : print(r.file)
+    const r = await call('GET', '/v1/snapshot' + qs({ path: file(0), pages: opt.pages ?? opt.page, width: opt.width, out: typeof opt.out === 'string' ? resolve(opt.out) : undefined, dir: typeof opt.dir === 'string' ? resolve(opt.dir) : undefined }))
+    opt.json ? out(r) : print(r.files.map((x) => x.file).join('\n'))
+    break
+  }
+  case 'generar': {
+    // Generación en paralelo: un plan con secciones (o diapositivas); cada una la escribe un modelo
+    // distinto a la vez, en directo, en su hueco del documento.
+    const path = file(0)
+    if (typeof opt.plan !== 'string' || !existsSync(opt.plan)) die('Uso: buho-docs generar <archivo.md> --plan plan.json [--modelo haiku] [--paralelo 8]  (formato del plan en buho-docs skill)')
+    const plan = JSON.parse(readFileSync(opt.plan, 'utf8').replace(/^﻿/, ''))
+    const deck = /^presentaci/i.test(plan.tipo ?? '') || Array.isArray(plan.diapositivas)
+    const items = (deck ? plan.diapositivas : plan.secciones) ?? []
+    if (!items.length) die('El plan no tiene «secciones» (documento) ni «diapositivas» (presentación)')
+    const modelo = opt.modelo ?? plan.modelo ?? 'haiku'
+    const paralelo = Math.max(1, Number(opt.paralelo ?? plan.paralelo) || 8)
+    const quien = author() ?? `Claude (${modelo})`
+    const q = (s) => JSON.stringify(String(s ?? ''))
+    const id = (i) => `gen-${i + 1}`
+    // 1 · Esqueleto: cabecera, títulos y un hueco por sección (se ve al momento).
+    const skel = items
+      .map((it, i) =>
+        deck
+          ? `${i ? '---\n\n' : ''}${it.diseno ? `@diseño: ${it.diseno}\n` : ''}${it.etiqueta ? `@etiqueta: ${it.etiqueta}\n` : ''}\n${i === 0 && !it.diseno ? '# ' : '## '}${it.titulo}\n\n::: hueco id=${id(i)} texto="Escribiendo…"\n:::\n`
+          : `## ${it.titulo}\n\n::: hueco id=${id(i)} texto="Escribiendo «${String(it.titulo).replace(/"/g, "'")}»…"\n:::\n`
+      )
+      .join('\n')
+    const t0 = Date.now()
+    if (existsSync(path)) {
+      await call('POST', '/v1/batch', { path, ops: [{ op: 'append', content: skel }], author: quien })
+    } else {
+      const front = ['---', `tipo: ${deck ? 'presentacion' : 'documento'}`, plan.estilo ? `estilo: ${plan.estilo}` : null, `titulo: ${q(plan.titulo ?? 'Sin título')}`, plan.subtitulo ? `subtitulo: ${q(plan.subtitulo)}` : null, plan.etiqueta ? `etiqueta: ${q(plan.etiqueta)}` : null, '---', '']
+        .filter((l) => l !== null)
+        .join('\n')
+      await call('POST', '/v1/batch', { path, ops: [{ op: 'write', content: front + '\n' + skel }], author: quien })
+    }
+    process.stderr.write(`Esqueleto con ${items.length} ${deck ? 'diapositivas' : 'secciones'} en ${Date.now() - t0} ms. Escribiendo ${Math.min(paralelo, items.length)} a la vez con ${modelo}…\n`)
+    // 2 · Un modelo por sección, `paralelo` a la vez, cada uno escribiendo en directo en su hueco.
+    const sintaxis = deck
+      ? 'Es el CONTENIDO de una diapositiva 16:9 (sin el título, que ya está). Muy breve: de 3 a 5 viñetas cortas, o un bloque «::: tarjetas 2» o «::: tarjetas 3» con «### Título {icon=reloj}» y una línea de texto por tarjeta, o un «::: cifras 3» con «- **cifra** texto». Como mucho 60 palabras.'
+      : `Es el CUERPO de una sección de un documento A4 (sin el título, que ya está). Unas ${'${palabras}'} palabras. Párrafos claros, negritas para lo importante, alguna lista. Puedes usar como mucho un bloque visual: «::: caja icon=bombilla» … «:::», o «::: tarjetas 3» con «### Título {icon=reloj}» y texto, o una tabla Markdown.`
+    const breve = 'Es el texto de una diapositiva de portada o de cierre: solo una o dos frases cortas (con alguna negrita), sin listas ni bloques.'
+    const prompt = (it, i) =>
+      [
+        `Escribe en español de España, en Markdown, para ${deck ? 'una presentación' : 'un documento'} titulado «${plan.titulo ?? ''}».`,
+        plan.contexto ? `Contexto: ${plan.contexto}` : '',
+        `Parte ${i + 1} de ${items.length}: «${it.titulo}».`,
+        it.pide ? `Qué debe contar: ${it.pide}` : '',
+        deck && /^(portada|cierre|seccion|cita)$/i.test(it.diseno ?? '') ? breve : sintaxis.replace('${palabras}', String(it.palabras ?? plan.palabras ?? 450)),
+        'Iconos válidos: reloj, check, equipo, ventas, datos, escudo, objetivo, cerebro, ley, alerta, bombilla, dinero, soporte, robot.',
+        'No inventes cifras, estudios ni porcentajes concretos. No repitas el título. Devuelve solo el Markdown, sin bloques de código alrededor ni comentarios.'
+      ]
+        .filter(Boolean)
+        .join('\n')
+    const runOne = async (it, i) => {
+      const t = Date.now()
+      const st = await call('POST', '/v1/stream/start', { path, hueco: id(i), author: quien, summary: `${items.length} ${deck ? 'diapositivas' : 'secciones'} generadas en paralelo` })
+      const child = spawn('claude', ['-p', '--model', modelo, '--output-format', 'stream-json', '--include-partial-messages', '--verbose'], { shell: process.platform === 'win32', stdio: ['pipe', 'pipe', 'ignore'] })
+      child.stdin.end(prompt(it, i))
+      await pipeClaude(child.stdout, st.id)
+      const r = await call('POST', '/v1/stream/end', { id: st.id })
+      process.stderr.write(`  ✓ ${it.titulo} · ${r.chars} caracteres · ${((Date.now() - t) / 1000).toFixed(1)} s\n`)
+      return r
+    }
+    const queue = items.map((it, i) => () => runOne(it, i))
+    await Promise.all(Array.from({ length: Math.min(paralelo, queue.length) }, async () => {
+      while (queue.length) await queue.shift()()
+    }))
+    const ck = await call('GET', '/v1/check' + qs({ path }))
+    const total = ((Date.now() - t0) / 1000).toFixed(1)
+    if (opt.json) out({ ok: true, path, segundos: Number(total), pages: ck.pages, warnings: ck.warnings })
+    else {
+      print(`Hecho en ${total} s: ${ck.pages} ${deck ? 'diapositivas' : 'páginas'} · ${path}`)
+      for (const w of ck.warnings) print(`  ${w.level === 'error' ? 'ERROR' : 'aviso'}${w.slide ? ` diap. ${w.slide}` : ''}${w.line ? ` línea ${w.line}` : ''}: ${w.message}`)
+    }
+    break
+  }
+  case 'bloques': {
+    const r = await call('GET', '/v1/bloques')
+    if (opt.json) { out(r); break }
+    for (const b of r.bloques) print(`${b.id.padEnd(14)} ${b.label}${b.propio ? '  (propio)' : ''}`)
+    print(`\nTus bloques: guarda .md en ${r.carpeta}`)
+    break
+  }
+  case 'insertar': {
+    const path = file(0)
+    if (!args[1] && typeof opt.file !== 'string' && typeof opt.text !== 'string') die('Uso: buho-docs insertar <archivo.md> <bloque> [--despues "Título"]  (o --file contenido.md)')
+    const txt = typeof opt.file === 'string' || typeof opt.text === 'string' ? await content(9) : undefined
+    changed(await call('POST', '/v1/insertar', { path, bloque: txt ? undefined : args[1], content: txt, despues: opt.despues, author: author() }))
+    break
+  }
+  case 'rellenar': {
+    const path = file(0)
+    if (!args[1]) die('Uso: buho-docs rellenar <archivo.md> <id-del-hueco> (--imagen foto.png [--ancho 80%] | --file contenido.md | --text "…")')
+    const img = typeof opt.imagen === 'string' ? opt.imagen : undefined
+    changed(await call('POST', '/v1/rellenar', { path, id: args[1], imagen: img, ancho: opt.ancho, alt: opt.alt, content: img ? undefined : await content(2), author: author() }))
+    break
+  }
+  case 'huecos': {
+    const r = await call('GET', '/v1/huecos' + qs({ path: file(0) }))
+    if (opt.json) { out(r); break }
+    if (!r.length) print('No hay huecos pendientes.')
+    for (const h of r) print(`${(h.id || '(sin id)').padEnd(20)} línea ${h.line}  ${h.texto}`)
+    break
+  }
+  case 'indice': {
+    changed(await call('POST', '/v1/indice', { path: file(0), niveles: opt.niveles, quitar: !!opt.quitar, author: author() }))
     break
   }
   case 'skill': {

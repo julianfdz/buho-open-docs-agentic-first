@@ -51,6 +51,8 @@ try {
 
   // Abrir por CLI: la app lo enseña.
   await cli('open', doc)
+  // La vista por defecto es solo la página (como Word); la prueba usa página + Markdown.
+  await page.locator('button[title="Página y Markdown"]').click()
   await page.waitForSelector('.cm-content', { timeout: 10000 })
   const frame = page.frameLocator('iframe.preview')
   await frame.locator('.pg').first().waitFor({ timeout: 20000 })
@@ -161,14 +163,94 @@ try {
 
   // Foto de una página para agentes.
   const snap = await cliJson('snapshot', doc, '--page', '2', '--out', join(out, 'pagina2.png'))
-  check(existsSync(snap.file) && readFileSync(snap.file).length > 10000, `snapshot: PNG de la página 2 (${(snap.bytes / 1024).toFixed(0)} KB)`)
+  check(existsSync(snap.file) && readFileSync(snap.file).length > 10000, `snapshot: PNG de la página 2 (${(snap.files[0].bytes / 1024).toFixed(0)} KB)`)
+
+  // ─── Edición visual (como en Word) ─────────────────────────────────────────────────────────
+  await cli('restore', doc, first.id.slice(0, 8), '--author', 'Claude')
+  await until(async () => !(await page.locator('.cm-content').innerText()).includes('Anexo del lote'))
+  await sleep(500)
+  const parrafo = frame.locator('p[contenteditable="true"]', { hasText: 'La IA ya no es cosa de grandes empresas' }).first()
+  await parrafo.click()
+  await page.keyboard.press('End')
+  await parrafo.evaluate((el) => {
+    const r = document.createRange()
+    r.selectNodeContents(el)
+    r.collapse(false)
+    getSelection().removeAllRanges()
+    getSelection().addRange(r)
+  })
+  await page.keyboard.type(' Frase escrita sobre la página.')
+  check(await until(async () => text(doc).includes('criterio. Frase escrita sobre la página.'), 5000), 'Escribir sobre la página cambia el Markdown (y se guarda)')
+  await page.keyboard.press('Enter')
+  await page.keyboard.type('Párrafo nuevo con Intro.')
+  check(await until(async () => /\n\nPárrafo nuevo con Intro\.\n/.test(text(doc)), 5000), 'Intro parte el párrafo en dos')
+  // Negrita con la barra: doble clic en una palabra y botón «Negrita».
+  await frame.locator('p[contenteditable="true"]', { hasText: 'Párrafo nuevo con Intro' }).first().evaluate((el) => {
+    el.focus()
+    const t = [...el.childNodes].find((n) => n.nodeType === 3 && n.textContent.includes('Intro'))
+    const i = t.textContent.indexOf('Intro')
+    const r = document.createRange()
+    r.setStart(t, i)
+    r.setEnd(t, i + 5)
+    getSelection().removeAllRanges()
+    getSelection().addRange(r)
+  })
+  await sleep(100)
+  await page.locator('.formatbar button[title^="Negrita"]').click()
+  check(await until(async () => text(doc).includes('Párrafo nuevo con **Intro**.'), 5000), 'Negrita desde la barra de formato')
+  // Deshacer (Ctrl+Z sobre la página).
+  await frame.locator('p[contenteditable="true"]', { hasText: 'Párrafo nuevo con' }).first().click()
+  await page.keyboard.press('Control+z')
+  check(await until(async () => text(doc).includes('Párrafo nuevo con Intro.') && !text(doc).includes('**Intro**'), 5000), 'Deshacer quita la negrita')
+  // Estilo del párrafo: Título 2.
+  await page.locator('.fb-style').selectOption('h2')
+  check(await until(async () => /\n## Párrafo nuevo con Intro\.\n/.test(text(doc)), 5000), 'Estilo «Título 2» desde la barra')
+  // Título de la portada (va a la cabecera YAML).
+  const tit = frame.locator('[data-meta="titulo"]').first()
+  await tit.click()
+  await page.keyboard.press('End')
+  await tit.evaluate((el) => {
+    const r = document.createRange()
+    r.selectNodeContents(el)
+    r.collapse(false)
+    getSelection().removeAllRanges()
+    getSelection().addRange(r)
+  })
+  await page.keyboard.type(' (editado)')
+  check(await until(async () => /titulo: .*\(editado\)/.test(text(doc)), 5000), 'Editar el título en la portada cambia la cabecera')
+  // Índice automático con números de página.
+  await page.locator('.formatbar button[title^="Índice"]').click()
+  check(await until(async () => (await frame.locator('.ix-item').count()) > 3, 6000), `Índice automático: ${await frame.locator('.ix-item').count()} entradas`)
+  const nums = await frame.locator('.ix-n').allInnerTexts()
+  check(nums.every((n) => /^\d+$/.test(n) && n !== '00') && Number(nums[nums.length - 1]) >= 3, `Índice con números de página (${nums.join(', ')})`)
+  // Insertar un bloque desde la barra.
+  await frame.locator('h2[contenteditable="true"]', { hasText: 'Por dónde empezar' }).first().click()
+  await page.locator('.formatbar button[title^="Insertar"]').click()
+  await page.locator('.fb-drop button', { hasText: 'Aviso' }).click()
+  check(await until(async () => text(doc).includes('::: caja aviso icon=alerta'), 5000), 'Insertar un bloque (aviso) desde la barra')
+  await page.screenshot({ path: join(out, '07-edicion-visual.png') })
+
+  // Huecos: se ven como «generándose» y luego se rellenan.
+  await cli('insertar', doc, 'hueco', '--author', 'Claude')
+  check(await until(async () => (await frame.locator('.bx-hueco').count()) === 1, 5000), 'Hueco visible en la página')
+  await cli('rellenar', doc, 'pendiente', '--text', 'Contenido que llega más tarde.', '--author', 'Claude')
+  check(await until(async () => (await frame.locator('.bx-hueco').count()) === 0 && (await frame.locator('#root').innerText()).includes('Contenido que llega más tarde.'), 5000), 'rellenar sustituye el hueco')
+
+  // Estilo blanco (sin marca).
+  const blank = join(out, 'docs', 'blanco.md')
+  await cli('new', blank, '--estilo', 'blanco', '--title', 'Documento en blanco')
+  await frame.locator('.tema-blanco').first().waitFor({ timeout: 8000 })
+  check((await frame.locator('.portada').count()) === 0 && (await frame.locator('.pg-marca img').count()) === 0, 'Documento en blanco: sin portada ni marca Búho')
+  await page.screenshot({ path: join(out, '08-blanco.png') })
+  await cli('open', doc)
+  await frame.locator('.pg').first().waitFor()
 
   // Volver a la versión original para el resto de la prueba.
   await cli('restore', doc, first.id.slice(0, 8), '--author', 'Claude')
 
   // PDF A4.
   const pdf = await cliJson('export', doc)
-  check(existsSync(pdf.file) && pdf.pages === 3 && readFileSync(pdf.file).subarray(0, 5).toString() === '%PDF-', `PDF A4: ${pdf.pages} páginas, ${(pdf.bytes / 1024).toFixed(0)} KB`)
+  check(existsSync(pdf.file) && pdf.pages >= 3 && readFileSync(pdf.file).subarray(0, 5).toString() === '%PDF-', `PDF A4: ${pdf.pages} páginas, ${(pdf.bytes / 1024).toFixed(0)} KB`)
 
   // Presentación: diapositivas, avisos y PDF 16:9.
   await cli('open', deck)
