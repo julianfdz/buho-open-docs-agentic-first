@@ -17,12 +17,14 @@ import {
   X
 } from 'lucide-react'
 import { changedLines } from '@shared/diff'
-import { kindOf, setIndex, splitFront, titleOf, wordCount } from '@shared/doc'
+import { kindOf, setIndex, setMeta, splitFront, titleOf, wordCount } from '@shared/doc'
 import { blockText, insertAfter, mergeWithPrevious, replaceBlock, setBlockStyle, splitBlock, type BlockRef, type BlockStyle } from '@shared/visual'
 import { DEFAULT_SETTINGS, type AppInfo, type DocChange, type OpenDoc, type RecentDoc, type RenderResult, type Settings } from '@shared/types'
 import Editor from './components/Editor'
 import Preview, { type VisualMsg } from './components/Preview'
 import FormatBar from './components/FormatBar'
+import TemaDialog from './components/TemaDialog'
+import { temaDe, type Tema } from '@shared/temas'
 import HistoryPanel from './components/HistoryPanel'
 import logo from './brand/buho.png'
 
@@ -64,6 +66,10 @@ export default function App(): React.JSX.Element {
   const [pvFocus, setPvFocus] = useState<{ line: number; offset: number; nonce: number } | null>(null)
   const [pvCmd, setPvCmd] = useState<{ name: string; value?: string; nonce: number } | null>(null)
   const [, setUndoTick] = useState(0)
+  // Temas: el del documento activo (resuelto por la app) y la lista para el selector.
+  const [temas, setTemas] = useState<Tema[]>([])
+  const [temaPkg, setTemaPkg] = useState<Tema | null>(null)
+  const [nuevoTema, setNuevoTema] = useState(false)
   const undo = useRef(new Map<string, { u: string[]; r: string[]; key: string; at: number }>())
 
   const tabsRef = useRef(tabs)
@@ -295,6 +301,21 @@ export default function App(): React.JSX.Element {
     setConflict(null)
   }, [active])
 
+  useEffect(() => {
+    void window.buho.temas().then(setTemas)
+  }, [])
+
+  const temaActual = tab ? temaDe(splitFront(tab.content).meta) : 'buho'
+  useEffect(() => {
+    void window.buho.tema(temaActual).then(setTemaPkg)
+  }, [temaActual, temas])
+
+  const aplicarTema = (id: string): void => {
+    if (!tab) return
+    // `tema:` sustituye al antiguo `estilo:`.
+    commitVisual(setMeta(setMeta(tab.content, 'estilo', null), 'tema', id), '')
+  }
+
   const updateSettings = (patch: Partial<Settings>): void => {
     const s = { ...settings, ...patch }
     setSettings(s)
@@ -367,6 +388,7 @@ export default function App(): React.JSX.Element {
   // ─── Pintar ──────────────────────────────────────────────────────────────────────────────
 
   const kind = tab ? kindOf(splitFront(tab.content).meta) : 'documento'
+  const temaId = tab ? temaDe(splitFront(tab.content).meta) : 'buho'
   const view = settings.view
   const dirty = tab ? tab.content !== tab.saved : false
   const errors = render?.warnings.filter((w) => w.level === 'error').length ?? 0
@@ -444,11 +466,36 @@ export default function App(): React.JSX.Element {
           onIndex={() => commitVisual(setIndex(tab.content, !/^:{3,}\s*indice\b/m.test(tab.content)), '')}
           onUndo={() => undoRedo('u')}
           onRedo={() => undoRedo('r')}
+          tema={temaId}
+          temas={temas}
+          onTema={aplicarTema}
+          onNuevoTema={() => setNuevoTema(true)}
+        />
+      )}
+      {nuevoTema && (
+        <TemaDialog
+          onClose={() => setNuevoTema(false)}
+          onCreated={(t) => {
+            setNuevoTema(false)
+            void window.buho.temas().then(setTemas)
+            aplicarTema(t.id)
+            say(`Tema «${t.nombre}» creado y aplicado`)
+          }}
         />
       )}
       <main className={`work v-${tab ? view : 'home'}`}>
         {!tab ? (
-          <Home recent={recent} onCreate={create} onOpen={openDialog} onRecent={openRecent} />
+          <Home
+            recent={recent}
+            onCreate={create}
+            onOpen={openDialog}
+            onRecent={openRecent}
+            temas={temas}
+            onPlantilla={async (id, tema) => {
+              const d = await window.buho.crearDesdePlantilla(id, tema)
+              if (d) addTab(d)
+            }}
+          />
         ) : (
           <>
             {view !== 'preview' && (
@@ -500,6 +547,7 @@ export default function App(): React.JSX.Element {
                   editable
                   focus={pvFocus}
                   cmd={pvCmd}
+                  tema={temaPkg}
                   onVisual={onVisual}
                   onRendered={setRender}
                   onPick={(m) => {
@@ -581,7 +629,19 @@ export default function App(): React.JSX.Element {
   )
 }
 
-function Home(p: { recent: RecentDoc[]; onCreate(k: 'documento' | 'presentacion', estilo: string): void; onOpen(): void; onRecent(path: string): void }): React.JSX.Element {
+function Home(p: {
+  recent: RecentDoc[]
+  onCreate(k: 'documento' | 'presentacion', estilo: string): void
+  onOpen(): void
+  onRecent(path: string): void
+  temas: Tema[]
+  onPlantilla(id: string, tema: string): void
+}): React.JSX.Element {
+  const [plantillas, setPlantillas] = useState<{ id: string; nombre: string; tipo: string; descripcion: string; propia?: boolean }[]>([])
+  const [tema, setTema] = useState('buho')
+  useEffect(() => {
+    void window.buho.plantillas().then((r) => setPlantillas(r.plantillas))
+  }, [])
   return (
     <div className="home">
       <div className="hero">
@@ -617,6 +677,27 @@ function Home(p: { recent: RecentDoc[]; onCreate(k: 'documento' | 'presentacion'
           <b>Abrir</b>
           <span>Un .md del disco · Ctrl+O</span>
         </button>
+      </div>
+      <div className="recent">
+        <h2>
+          Plantillas
+          <select className="fb-style" value={tema} onChange={(e) => setTema(e.target.value)} title="Tema con el que se crea">
+            {p.temas.map((t) => (
+              <option key={t.id} value={t.id}>
+                Tema: {t.nombre}
+              </option>
+            ))}
+          </select>
+        </h2>
+        <div className="plantillas">
+          {plantillas.map((pl) => (
+            <button key={pl.id} className="plantilla" onClick={() => p.onPlantilla(pl.id, tema)} title={pl.descripcion}>
+              {pl.tipo === 'presentacion' ? <Presentation size={16} /> : <FileText size={16} />}
+              <b>{pl.nombre}</b>
+              <span className="muted">{pl.descripcion}</span>
+            </button>
+          ))}
+        </div>
       </div>
       {p.recent.length > 0 && (
         <div className="recent">

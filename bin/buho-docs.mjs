@@ -30,6 +30,14 @@
  *   buho-docs bloques | insertar <archivo.md> <bloque> [--despues "Título"]   (bloques ya maquetados)
  *   buho-docs huecos <archivo.md> | rellenar <archivo.md> <id> (--imagen foto.png | --file contenido.md)
  *   buho-docs indice <archivo.md> [--niveles 2|3] [--quitar]   (índice automático con números de página)
+ *   buho-docs plantillas | new <archivo.md> --plantilla acta|factura|presupuesto|propuesta|informe|carta|guia|one-pager|plan|cv|pitch|formacion|resultados [--tema id]
+ *   buho-docs temas | tema crear <id> --principal "#rrggbb" --acento "#rrggbb" [--nombre "…"] [--logo logo.png] [--marca "…"] [--portada simple|ninguna] [--titulos "Fuente"] [--texto "Fuente"]
+ *   buho-docs tema <archivo.md> <id>                 (aplicar un tema al documento)
+ *   Para IAs (leer rápido y limpio, cambiar por id):
+ *   buho-docs mapa <archivo.md> [--bloques]          (secciones con tokens e ids)
+ *   buho-docs leer <archivo.md> [--seccion "T" | --bloque #id | --desde #id] [--max 2000] [--ids]
+ *   buho-docs buscar <archivo.md> "consulta"  ·  buho-docs buscar "consulta" --carpeta <carpeta>
+ *   buho-docs bloque <archivo.md> #id  ·  buho-docs editar <archivo.md> #id --file nuevo.md [--mode replace|before|after|delete]
  *
  * El texto nuevo se pasa con --file <ruta>, con --text "…" o con - (entrada estándar).
  * Opciones globales: --author <nombre> (firma en el historial), --json, --no-launch.
@@ -49,7 +57,7 @@ function die(msg, code = 1) {
   process.exit(code)
 }
 
-const FLAGS = new Set(['all', 'lines', 'json', 'no-launch', 'stdin', 'path', 'help', 'claude', 'quitar'])
+const FLAGS = new Set(['all', 'lines', 'json', 'no-launch', 'stdin', 'path', 'help', 'claude', 'quitar', 'ids', 'bloques', 'borrar'])
 function parseArgs(argv) {
   const pos = []
   const opt = {}
@@ -242,7 +250,7 @@ switch (cmd) {
   case 'new': {
     const path = file(0, 'archivo .md nuevo')
     const c = await content(1, false)
-    const r = await call('POST', '/v1/new', { path, kind: opt.kind, title: opt.title, subtitle: opt.subtitle, estilo: opt.estilo, content: c, author: author() })
+    const r = await call('POST', '/v1/new', { path, kind: opt.kind, title: opt.title, subtitle: opt.subtitle, estilo: opt.estilo, tema: opt.tema, plantilla: opt.plantilla, content: c, author: author() })
     opt.json ? out(r) : print(`Creado ${r.path} (${r.kind}) y abierto en Búho Docs`)
     break
   }
@@ -574,6 +582,75 @@ switch (cmd) {
   }
   case 'indice': {
     changed(await call('POST', '/v1/indice', { path: file(0), niveles: opt.niveles, quitar: !!opt.quitar, author: author() }))
+    break
+  }
+  case 'plantillas': {
+    const r = await call('GET', '/v1/plantillas')
+    if (opt.json) { out(r); break }
+    for (const p of r.plantillas) print(`${p.id.padEnd(12)} ${p.tipo === 'presentacion' ? '[presentación]' : '[documento]   '} ${p.nombre} · ${p.descripcion}`)
+    print(`\nTus plantillas: guarda .md en ${r.carpeta}`)
+    break
+  }
+  case 'temas': {
+    const r = await call('GET', '/v1/temas')
+    if (opt.json) { out(r); break }
+    for (const t of r.temas) print(`${t.id.padEnd(14)} ${t.nombre}${t.propio ? ' (propio)' : ''} · ${t.colores.principal} / ${t.colores.acento} · portada ${t.portada ?? 'ninguna'}${t.logo ? ' · con logo' : ''}`)
+    print(`\nTus temas: ${r.carpeta}\\<id>\\tema.json (+ logo y estilo.css)`)
+    break
+  }
+  case 'tema': {
+    if (args[0] === 'crear') {
+      if (!args[1]) die('Uso: buho-docs tema crear <id> --principal "#1f3b63" --acento "#2f80ed" [--nombre "…"] [--logo logo.png] [--marca "…"] [--portada simple|ninguna]')
+      const r = await call('POST', '/v1/temas', { id: args[1], nombre: opt.nombre, principal: opt.principal, acento: opt.acento, suave: opt.suave, texto: opt.color_texto, titulos: opt.titulos, fuenteTexto: opt.texto, logo: typeof opt.logo === 'string' ? resolve(opt.logo) : undefined, marca: opt.marca, pie: opt.pie, portada: opt.portada, base: opt.base })
+      opt.json ? out(r) : print(`Tema «${r.nombre}» creado (${r.id}). Úsalo con: buho-docs tema <archivo.md> ${r.id}`)
+      break
+    }
+    const path = file(0)
+    if (!args[1]) die('Uso: buho-docs tema <archivo.md> <id>  (ids en buho-docs temas)')
+    changed(await call('POST', '/v1/batch', { path, ops: [{ op: 'meta', key: 'estilo', value: null }, { op: 'meta', key: 'tema', value: args[1] }], author: author() }))
+    break
+  }
+  case 'mapa': {
+    const r = await call('GET', '/v1/mapa' + qs({ path: file(0), bloques: opt.bloques ? 'true' : undefined }))
+    if (opt.json) { out(r); break }
+    const N = (n) => Number(n).toLocaleString('es-ES')
+    print(`${r.kind === 'presentacion' ? 'Presentación' : 'Documento'} «${r.title}» · ${N(r.tokens)} tokens · ${r.nBlocks} bloques · versión ${r.hash}`)
+    for (const s of r.sections) print(`#${s.id.padEnd(8)} ${'  '.repeat(s.level - 1)}${s.title}  ·  ${N(s.tokens)} tok  ·  ${s.blocks} bloques  ·  l. ${s.line}-${s.end}`)
+    if (r.blocks) {
+      print('')
+      for (const b of r.blocks) print(`#${b.id.padEnd(8)} ${b.type.padEnd(9)} ${String(b.tokens).padStart(4)} tok  ${b.preview}`)
+    }
+    break
+  }
+  case 'leer': {
+    const r = await call('GET', '/v1/leer' + qs({ path: file(0), seccion: opt.seccion, bloque: opt.bloque, desde: opt.desde, max: opt.max ?? opt['max-tokens'], ids: opt.ids ? 'true' : undefined }))
+    if (opt.json) { out(r); break }
+    print(r.text)
+    process.stderr.write(`\n— ${r.blocks} bloques · ${r.tokens} tokens${r.next ? ` · sigue en --desde ${r.next}` : ''}\n`)
+    break
+  }
+  case 'buscar': {
+    const folder = typeof opt.carpeta === 'string' ? resolve(opt.carpeta) : undefined
+    const q = folder ? args[0] : args[1]
+    if (!q) die('Uso: buho-docs buscar <archivo.md> "consulta"  ·  buho-docs buscar "consulta" --carpeta <carpeta>')
+    const r = await call('GET', '/v1/buscar' + qs({ q, path: folder ? undefined : file(0), carpeta: folder, limite: opt.limite }))
+    if (opt.json) { out(r); break }
+    if (!r.hits.length) print(`Nada sobre «${q}» (${r.files} documento(s), ${r.ms} ms).`)
+    for (const h of r.hits) print(`#${h.id.padEnd(8)} ${String(h.score).padStart(5)}  ${folder ? h.path.split(/[\\/]/).pop() + ' › ' : ''}${h.section || '(inicio)'} · l. ${h.line}\n          ${h.snippet}`)
+    process.stderr.write(`— ${r.hits.length} resultado(s) en ${r.files} documento(s) · ${r.ms} ms\n`)
+    break
+  }
+  case 'bloque': {
+    const r = await call('GET', '/v1/bloque' + qs({ path: file(0), id: args[1] }))
+    if (opt.json) out(r)
+    else print(`#${r.id} · ${r.type} · ${r.path || '(inicio)'} · líneas ${r.line}-${r.end}\n\n${r.markdown}`)
+    break
+  }
+  case 'editar': {
+    const path = file(0)
+    if (!args[1]) die('Uso: buho-docs editar <archivo.md> #id (--file nuevo.md | --text "…") [--mode replace|before|after|delete]')
+    const mode = opt.mode ?? (opt.borrar ? 'delete' : 'replace')
+    changed(await call('POST', '/v1/bloque', { path, id: args[1], mode, content: mode === 'delete' ? '' : await content(2), author: author() }))
     break
   }
   case 'skill': {

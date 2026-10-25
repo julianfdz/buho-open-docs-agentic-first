@@ -1,5 +1,6 @@
 import { parse, parseDocument } from 'yaml'
 import type { DocKind } from './types'
+import { editBlock, type BlockEditMode } from './index-ai'
 
 /**
  * Modelo del documento: un Markdown con cabecera YAML (frontmatter).
@@ -335,7 +336,7 @@ export function wordCount(src: string): number {
 // ─── Lotes: varios cambios en una sola llamada (y una sola entrada del historial) ───────────────
 
 export interface Op {
-  op: 'write' | 'replace' | 'section' | 'slide' | 'append' | 'meta' | 'fill' | 'insert' | 'index'
+  op: 'write' | 'replace' | 'section' | 'slide' | 'append' | 'meta' | 'fill' | 'insert' | 'index' | 'block'
   id?: string
   after?: string
   block?: string
@@ -385,6 +386,10 @@ export function applyOps(src: string, ops: Op[]): { content: string; labels: str
         case 'fill':
           s = fillHole(s, o.id ?? '', o.content ?? '')
           labels.push(`hueco «${o.id}» rellenado`)
+          break
+        case 'block':
+          s = editBlock(s, o.id ?? '', (o.mode ?? 'replace') as BlockEditMode, o.content ?? '')
+          labels.push(`bloque #${(o.id ?? '').replace(/^#/, '')}`)
           break
         case 'index':
           s = setIndex(s, o.value !== false, Number(o.n) || 2)

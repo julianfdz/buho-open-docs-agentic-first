@@ -32,10 +32,14 @@ Búho Docs (de Buho Corps Systems) hace **documentos A4** y **presentaciones 16:
 3. `buho-docs check "C:\ruta\Mi documento.md"`: páginas o diapositivas y avisos (diapositivas que no caben, iconos o imágenes que no existen). Corrige lo que salga.
 4. `buho-docs export "C:\ruta\Mi documento.md"` → PDF junto al `.md`. Díselo al usuario con la ruta.
 
-**Cambiar lo que ya existe:**
-1. `buho-docs outline <doc>` (títulos y diapositivas con su línea) y `buho-docs read <doc> --lines` si necesitas el texto.
-2. El cambio más pequeño que sirva (§3). Si el usuario acaba de escribir en la app, el CLI guarda antes lo suyo: no se pierde nada.
-3. `check` y, si te lo piden, `export`.
+**Cambiar lo que ya existe (la forma rápida, con ids):**
+1. `buho-docs mapa <doc>`: secciones con su id (`#b…`) y cuántos tokens ocupa cada una. **No leas el documento entero** si no hace falta.
+2. `buho-docs buscar <doc> "de qué se habla"` (o `--carpeta` para varios documentos): los bloques que tratan eso, con su id y un fragmento. Es determinista (palabras, frase exacta y parecido para erratas), sin modelos, en milisegundos.
+3. `buho-docs leer <doc> --seccion "Título" --ids [--max 2000]`: solo esa parte, en texto limpio y con el id de cada bloque.
+4. `buho-docs editar <doc> #bxxxx --file nuevo.md` cambia ese bloque exacto (o `--mode before|after|delete`). Varios a la vez: `batch` con `{"op":"block","id":"bxxxx","content":"…"}`.
+5. `check` y, si te lo piden, `export`.
+
+Los ids salen del texto de cada bloque: no cambian al editar otras partes, pero sí el del bloque que cambias. Si un id ya no existe, vuelve a `mapa` o `buscar`. Si el usuario acaba de escribir en la app, el CLI guarda antes lo suyo: no se pierde nada.
 
 **Editar el archivo con tus propias herramientas** (Edit/Write) también vale: la app lo detecta y lo enseña en directo. Firma antes para que el historial diga quién fue: `buho-docs tag <doc> --author Claude` (vale para el siguiente guardado).
 
@@ -73,6 +77,13 @@ buho-docs generar <doc.md> --plan plan.json [--modelo haiku] [--paralelo 8]   # 
 buho-docs bloques | insertar <doc.md> <bloque> [--despues "Título"]           # bloques ya maquetados
 buho-docs huecos <doc.md> | rellenar <doc.md> <id> (--imagen f.png [--ancho 80%] | --file c.md | --text "…")
 buho-docs indice <doc.md> [--niveles 2|3] [--quitar]                         # índice con números de página
+buho-docs mapa <doc.md> [--bloques]                    # secciones (y bloques) con id y tokens
+buho-docs buscar <doc.md> "consulta" | buho-docs buscar "consulta" --carpeta <carpeta>
+buho-docs leer <doc.md> [--seccion "T" | --bloque #id | --desde #id] [--max 2000] [--ids]   # texto limpio
+buho-docs bloque <doc.md> #id                          # un bloque (texto y Markdown)
+buho-docs editar <doc.md> #id --file nuevo.md [--mode replace|before|after|delete]
+buho-docs plantillas | new <doc.md> --plantilla factura [--tema corporativo]
+buho-docs temas | tema <doc.md> <id> | tema crear <id> --principal "#rrggbb" --acento "#rrggbb" [--logo logo.png] [--marca "…"] [--portada simple|ninguna]
 buho-docs docs | templates | status | skill
 ```
 
@@ -139,7 +150,9 @@ Texto…
 - Las tablas Markdown salen con cabecera navy. Las imágenes: `![](imagen.png)` (ruta relativa al `.md`) y `{width=60%}` al final del párrafo para el ancho.
 - Comillas: escribe «» o "" (las rectas se convierten en «»).
 
-**Estilo**: `estilo: buho` (por defecto) o `estilo: blanco` (sin marca ni portada; `portada: true` pone una portada sencilla). `css: mi-estilo.css` añade una hoja de estilo propia (ruta relativa al .md). Con `new --estilo blanco` se crea en blanco.
+**Tema** (`tema:` en la cabecera; `estilo:` también vale): `buho` (por defecto), `blanco` (sin marca), `corporativo`, `calido`, `moderno` o uno propio del usuario (`buho-docs temas`). Un tema es un paquete: colores, letras, logo, marca de la cabecera y tipo de portada (`arbol`, `simple` o `ninguna`); `portada: false` la quita en un documento concreto. `css: mi-estilo.css` añade una hoja de estilo propia.
+
+**Plantillas** para arrancar rápido (se crean con el tema que se diga): acta, factura, presupuesto, propuesta, informe, carta, guía, one-pager, plan de proyecto, currículum; presentaciones: pitch, formación, resultados. `buho-docs new informe.md --plantilla informe --tema buho`; luego rellena los [corchetes] con `batch` o `editar`.
 
 **Índice**: `buho-docs indice <doc>` mete al principio un índice automático con los títulos y su número de página (se actualiza solo).
 

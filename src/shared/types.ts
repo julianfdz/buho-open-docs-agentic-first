@@ -105,6 +105,12 @@ export interface BuhoDocsApi {
   /** Documento nuevo: estilo buho (marca Búho AI) o blanco (sin marca). */
   create(kind: DocKind, estilo?: string): Promise<OpenDoc | null>
   bloques(): Promise<{ carpeta: string; bloques: { id: string; label: string; md: string; propio?: boolean }[] }>
+  tema(id: string): Promise<import('./temas').Tema>
+  temas(): Promise<import('./temas').Tema[]>
+  crearTema(n: { id: string; nombre?: string; principal: string; acento: string; logo?: string; marca?: string; portada?: 'simple' | 'ninguna'; base?: 'buho' | 'blanco' }): Promise<{ ok: boolean; tema?: import('./temas').Tema; error?: string }>
+  elegirLogo(): Promise<string | null>
+  plantillas(): Promise<{ carpeta: string; plantillas: { id: string; nombre: string; tipo: string; descripcion: string; propia?: boolean }[] }>
+  crearDesdePlantilla(id: string, tema: string): Promise<OpenDoc | null>
   close(path: string): Promise<void>
   /** Guarda lo escrito en la app (queda en el historial como tuyo). */
   save(path: string, content: string): Promise<{ ok: boolean; error?: string }>

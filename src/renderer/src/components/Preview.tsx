@@ -28,6 +28,8 @@ interface Props {
   focus: { line: number; offset: number; nonce: number } | null
   /** Orden de formato para la selección de la página (negrita, cursiva…). */
   cmd: { name: string; value?: string; nonce: number } | null
+  /** Tema del documento, ya resuelto (los propios traen logo y CSS). */
+  tema: import('@shared/temas').Tema | null
   onRendered(r: RenderResult): void
   onPick(m: { line: number; word: string; double: boolean }): void
   onVisual(m: VisualMsg): void
@@ -63,7 +65,7 @@ export default function Preview(p: Props): React.JSX.Element {
       lastFlash.current = p.flash?.nonce ?? null
       lastFocus.current = p.focus?.nonce ?? null
       frame.current?.contentWindow?.postMessage(
-        { type: 'render', id: ++seq.current, source: p.source, baseDir: p.baseDir, flash: flash?.lines ?? [], reveal: flash?.reveal ?? false, editable: p.editable, focus: focus ? { line: focus.line, offset: focus.offset } : undefined },
+        { type: 'render', id: ++seq.current, source: p.source, baseDir: p.baseDir, flash: flash?.lines ?? [], reveal: flash?.reveal ?? false, editable: p.editable, focus: focus ? { line: focus.line, offset: focus.offset } : undefined, tema: p.tema ?? undefined },
         '*'
       )
     }
@@ -73,7 +75,7 @@ export default function Preview(p: Props): React.JSX.Element {
     }
     const t = setTimeout(send, 200)
     return () => clearTimeout(t)
-  }, [ready, p.source, p.baseDir, p.flash?.nonce, p.focus?.nonce, p.editable])
+  }, [ready, p.source, p.baseDir, p.flash?.nonce, p.focus?.nonce, p.editable, p.tema])
 
   useEffect(() => {
     if (ready && p.follow) frame.current?.contentWindow?.postMessage({ type: 'scrollTo', line: p.follow, quiet: true }, '*')

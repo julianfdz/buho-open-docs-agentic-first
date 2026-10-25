@@ -1018,7 +1018,7 @@ tr,
 }
 
 /* ─── Estilo blanco: sin marca, como un documento de Word ───────────────────────── */
-.tema-blanco {
+.tema-id-blanco {
   --navy: #111111;
   --turq: #444444;
   --turq-d: #333333;
@@ -1030,10 +1030,10 @@ tr,
   --serif: Calibri, Carlito, 'Segoe UI', Arial, sans-serif;
   --sans: Calibri, Carlito, 'Segoe UI', Arial, sans-serif;
 }
-.tema-blanco .pg::before,
-.tema-blanco .s-barra,
-.tema-blanco .s-marca,
-.tema-blanco .portada::before {
+.tema-id-blanco .pg::before,
+.tema-id-blanco .s-barra,
+.tema-id-blanco .portada::before,
+.tema-blanco .s-marca {
   display: none;
 }
 .tema-blanco .pg-cab {
@@ -1043,32 +1043,70 @@ tr,
 .tema-blanco .pg-pie {
   border-top: 0;
 }
-.tema-blanco thead th {
+.tema-id-blanco thead th {
   background: #eeeeee;
   color: #111;
   text-transform: none;
   letter-spacing: 0;
 }
-.tema-blanco .ic {
+.tema-id-blanco .ic {
   background: #333;
 }
-.tema-blanco .tarjeta,
-.tema-blanco .tarjeta:nth-child(even) {
+.tema-id-blanco .tarjeta,
+.tema-id-blanco .tarjeta:nth-child(even) {
   background: #fff;
   border: 1px solid #ddd;
   box-shadow: none;
 }
-.tema-blanco .bx-caja {
+.tema-id-blanco .bx-caja {
   border-left-color: #999;
 }
-.tema-blanco .bx-panel,
-.tema-blanco .bx-caja.is-navy,
-.tema-blanco .slide.oscuro {
+.tema-id-blanco .bx-panel,
+.tema-id-blanco .bx-caja.is-navy,
+.tema-id-blanco .slide.oscuro {
   background: #222;
 }
-.tema-blanco ul > li::marker,
-.tema-blanco ol > li::marker {
+.tema-id-blanco ul > li::marker,
+.tema-id-blanco ol > li::marker {
   color: inherit;
+}
+/* Temas limpios con color: segunda tarjeta en el color principal suave, sin el azul de Búho. */
+.tema-blanco .tarjeta:nth-child(even) {
+  background: #f5f6f8;
+}
+.tema-blanco .slide.oscuro,
+.tema-blanco .bx-panel,
+.tema-blanco .bx-caja.is-navy {
+  background: var(--navy);
+}
+
+/* Portada simple (temas limpios): logo, título y una banda con los colores del tema. */
+.portada-simple::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 4mm;
+  background: var(--turq);
+}
+.portada-simple .p-logo img {
+  height: 16mm;
+  max-width: 70mm;
+  object-fit: contain;
+}
+.portada-simple .p-centro {
+  top: 95mm;
+}
+.portada-simple .p-titulo {
+  font-size: 32pt;
+}
+.p-banda {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 26mm;
+  background: var(--navy);
+  border-top: 2.5mm solid var(--turq);
 }
 .portada-blanca .p-centro {
   top: 100mm;

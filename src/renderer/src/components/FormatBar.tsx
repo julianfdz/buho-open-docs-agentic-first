@@ -14,6 +14,7 @@ import {
   Undo2
 } from 'lucide-react'
 import type { BlockRef, BlockStyle } from '@shared/visual'
+import type { Tema } from '@shared/temas'
 
 /**
  * Barra de formato como la de Word: estilo del párrafo, negrita, cursiva, listas, enlace, insertar
@@ -32,6 +33,10 @@ interface Props {
   onIndex(): void
   onUndo(): void
   onRedo(): void
+  tema: string
+  temas: Tema[]
+  onTema(id: string): void
+  onNuevoTema(): void
 }
 
 const STYLES: { id: BlockStyle; label: string }[] = [
@@ -125,6 +130,21 @@ export default function FormatBar(p: Props): React.JSX.Element {
           <ListTree size={15} /> Índice
         </button>
       )}
+      <select
+        className="fb-style fb-tema"
+        title="Tema: colores, letras, logo y portada"
+        value={p.temas.some((t) => t.id === p.tema) ? p.tema : ''}
+        onChange={(e) => (e.target.value === '__nuevo' ? p.onNuevoTema() : p.onTema(e.target.value))}
+      >
+        {!p.temas.some((t) => t.id === p.tema) && <option value="">Tema: {p.tema}</option>}
+        {p.temas.map((t) => (
+          <option key={t.id} value={t.id}>
+            Tema: {t.nombre}
+            {t.propio ? ' (propio)' : ''}
+          </option>
+        ))}
+        <option value="__nuevo">＋ Nuevo tema…</option>
+      </select>
       <div className="fb-menu" ref={box}>
         <button className="fb fb-text" title="Insertar un bloque ya maquetado debajo del cursor" onClick={() => setMenu(!menu)}>
           <Plus size={15} /> Insertar <ChevronDown size={13} />

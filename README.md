@@ -17,7 +17,9 @@ Hacer un PDF bonito con una IA suele ser: pedirlo, esperar a que genere un scrip
 - **Escribir como en Word**: el texto se edita sobre la propia página, con barra de formato (estilo de párrafo, negrita, cursiva, tachado, enlace, listas, cita), Intro y Retroceso como siempre, deshacer y corrector ortográfico. El Markdown queda debajo, por si lo quieres ver.
 - **Generación en paralelo**: `buho-docs generar` reparte un plan entre varios modelos que escriben a la vez, en directo, cada uno en su sección o diapositiva (12 secciones en ~25 s).
 - **Bloques prediseñados, índice y huecos**: cajas, tarjetas, tablas, pasos… de un clic; índice automático con números de página; huecos que se rellenan cuando llega una imagen o un texto de otro agente.
-- **Estilos intercambiables**: `estilo: buho` o `estilo: blanco` (sin marca), y `css:` para una hoja de estilo propia.
+- **Temas como paquetes**: colores, letras, logo, marca y portada (`tema: buho|blanco|corporativo|calido|moderno` o uno propio, creado desde la app en un minuto o con `buho-docs tema crear`), más `css:` para retoques.
+- **Plantillas genéricas**: acta, factura, presupuesto, propuesta, informe, carta, guía, one-pager, plan de proyecto, currículum, y presentaciones de pitch, formación y resultados; las tuyas, como .md en la carpeta de datos.
+- **Lectura rápida para IAs**: `mapa` (secciones con tokens), `leer` (texto limpio con límite de tokens), `buscar` (determinista: palabras, frase exacta y erratas, en milisegundos, en un documento o una carpeta) e **ids por bloque** para cambiar un párrafo exacto con `editar #b…`.
 
 ## Plantilla Búho
 

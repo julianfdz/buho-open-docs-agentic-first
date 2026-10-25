@@ -2,6 +2,7 @@ import MarkdownIt from 'markdown-it'
 import { kindOf, metaGet, splitFront, splitSlides, type Slide } from '@shared/doc'
 import type { DocKind, RenderWarning } from '@shared/types'
 import { CONTAINERS, LAYOUTS, LAYOUT_ALIAS } from '@shared/syntax'
+import { TEMAS_BASE, temaDe, type Tema } from '@shared/temas'
 import { iconSvg } from './icons'
 import type { PageChrome } from './paginate'
 import buho from '../brand/buho.png'
@@ -35,8 +36,10 @@ export interface Built {
   html: string
   /** Cabecera y pie de las páginas A4. */
   chrome?: PageChrome
-  /** Estilo: buho (marca Búho AI) o blanco (sin marca, como un documento de Word). */
+  /** Estructura del tema: buho (marca, portada con imagen) o blanco (limpio). */
   theme: 'buho' | 'blanco'
+  /** Tema completo (colores, letras, logo…). */
+  tema: Tema
   /** Hoja de estilo propia del documento (cabecera css: archivo.css). */
   css?: string
   title: string
@@ -245,9 +248,11 @@ function renderMd(src: string, env: Env): string {
 
 // ─── Documento A4 ──────────────────────────────────────────────────────────────────────────────
 
-/** Estilo del documento: `estilo: blanco` quita toda la marca (portada solo si se pide). */
-export function themeOf(meta: Record<string, unknown>): 'buho' | 'blanco' {
-  return /^(blanco|plain|blank|word|limpio|ninguno)$/i.test(metaGet(meta, 'estilo', 'plantilla', 'theme', 'template') ?? '') ? 'blanco' : 'buho'
+/** El tema del documento: el que se pasa (temas del usuario, ya resueltos) o uno de serie. */
+function temaFinal(meta: Record<string, unknown>, tema?: Tema): Tema {
+  if (tema) return tema
+  const id = temaDe(meta)
+  return TEMAS_BASE.find((t) => t.id === id) ?? TEMAS_BASE[0]
 }
 
 const cssOf = (meta: Record<string, unknown>, baseDir: string): string | undefined => {
@@ -258,48 +263,58 @@ const cssOf = (meta: Record<string, unknown>, baseDir: string): string | undefin
 /** Campos de la portada editables en la vista (van a la cabecera YAML). */
 const metaAttr = (k: string): string => ` data-meta="${k}"`
 
-function buildDoc(src: string, baseDir: string): Built {
+function buildDoc(src: string, baseDir: string, temaIn?: Tema): Built {
   const f = splitFront(src)
   const meta = f.meta
   const warnings: RenderWarning[] = f.error ? [{ line: 1, level: 'error', message: f.error }] : []
   const g = (...k: string[]): string | undefined => metaGet(meta, ...k)
-  const theme = themeOf(meta)
+  const tema = temaFinal(meta, temaIn)
+  const buhoBase = tema.base === 'buho'
   const title = g('titulo', 'título', 'title') ?? ''
   const fecha = g('fecha', 'date') ?? ''
-  const cover = theme === 'blanco' ? /^(true|s[ií])$/i.test(g('portada', 'cover') ?? '') : (g('portada', 'cover') ?? 'true') !== 'false'
+  const pidePortada = g('portada', 'cover')
+  // Portada: «portada: false» la quita; en temas limpios solo sale si el tema la trae o se pide.
+  const estiloPortada: 'arbol' | 'simple' | 'ninguna' =
+    pidePortada === 'false' ? 'ninguna' : buhoBase ? (tema.portada ?? 'arbol') : /^(true|s[ií])$/i.test(pidePortada ?? '') ? (tema.portada === 'ninguna' || !tema.portada ? 'simple' : tema.portada) : (tema.portada ?? 'ninguna')
+  const logo = tema.logo ?? (buhoBase ? wordmark : '')
+  const kicker = g('etiqueta', 'kicker') ? `<div class="etiqueta">${escHtml(g('etiqueta', 'kicker')!)}</div>` : ''
+  const sub = g('subtitulo', 'subtítulo', 'subtitle') ? `<p class="p-sub"${metaAttr('subtitulo')}>${md.renderInline(g('subtitulo', 'subtítulo', 'subtitle')!)}</p>` : ''
+  const para = g('destinatario', 'para', 'audience', 'cliente', 'client') ? `<div class="p-para">${escHtml(g('destinatario', 'para', 'audience', 'cliente', 'client')!)}</div>` : ''
   let html = ''
-  if (cover && theme === 'blanco') {
+  if (estiloPortada === 'simple') {
     const datos = [fecha, g('autor', 'author'), g('lugar', 'place')].filter(Boolean).join(' · ')
-    html += `<section class="portada portada-blanca" data-line="1">
+    html += `<section class="portada portada-simple" data-line="1">
+  ${logo ? `<div class="p-logo"><img src="${logo}" alt=""></div>` : ''}
   <div class="p-centro">
+    ${kicker}
     <h1 class="p-titulo"${metaAttr('titulo')}>${md.renderInline(title || 'Sin título')}</h1>
-    ${g('subtitulo', 'subtítulo', 'subtitle') ? `<p class="p-sub"${metaAttr('subtitulo')}>${md.renderInline(g('subtitulo', 'subtítulo', 'subtitle')!)}</p>` : ''}
+    ${sub}${para}
     ${datos ? `<div class="p-datos">${escHtml(datos)}</div>` : ''}
   </div>
+  <div class="p-banda"></div>
 </section>\n`
-  } else if (cover) {
+  } else if (estiloPortada === 'arbol') {
     const datos = [fecha, g('autor', 'author') ?? 'Búho AI', g('lugar', 'place')].filter(Boolean).join(' · ')
     html += `<section class="portada" data-line="1">
-  <div class="p-logo"><img src="${wordmark}" alt="Búho AI"><div class="lema">${escHtml(g('lema') ?? 'Tu equipo técnico de IA')}</div></div>
+  <div class="p-logo">${logo ? `<img src="${logo}" alt="">` : ''}<div class="lema">${escHtml(g('lema') ?? (tema.id === 'buho' ? 'Tu equipo técnico de IA' : ''))}</div></div>
   <div class="p-centro">
-    ${g('etiqueta', 'kicker') ? `<div class="etiqueta">${escHtml(g('etiqueta', 'kicker')!)}</div>` : ''}
+    ${kicker}
     <h1 class="p-titulo"${metaAttr('titulo')}>${md.renderInline(title || 'Sin título')}</h1>
-    ${g('subtitulo', 'subtítulo', 'subtitle') ? `<p class="p-sub"${metaAttr('subtitulo')}>${md.renderInline(g('subtitulo', 'subtítulo', 'subtitle')!)}</p>` : ''}
-    ${g('destinatario', 'para', 'audience', 'cliente', 'client') ? `<div class="p-para">${escHtml(g('destinatario', 'para', 'audience', 'cliente', 'client')!)}</div>` : ''}
+    ${sub}${para}
     ${datos ? `<div class="p-datos">${escHtml(datos)}</div>` : ''}
   </div>
   <img class="p-arbol" src="${arbolDoc}" alt="">
-  <div class="p-web">Búho AI · buhoai.es</div>
+  ${tema.id === 'buho' ? '<div class="p-web">Búho AI · buhoai.es</div>' : ''}
   <div class="p-barra"></div>
 </section>\n`
   }
   html += `<article class="cuerpo">${renderMd(f.body, { lineOffset: f.bodyStart, baseDir, warnings })}</article>`
   const cab = g('cabecera', 'header') ?? [title, fecha].filter(Boolean).join('  |  ')
-  const pie = g('pie', 'footer') ?? (theme === 'blanco' ? '' : 'Búho AI · Tu equipo técnico de IA · buhoai.es')
+  const pie = g('pie', 'footer') ?? tema.pie ?? (tema.id === 'buho' ? 'Búho AI · Tu equipo técnico de IA · buhoai.es' : '')
   const pieDer = g('pie-derecha', 'footer-right')
   const nota = g('nota-pie', 'aviso-pie', 'disclaimer')
-  const chrome = theme === 'blanco' ? { logo: '', marca: '', cab, pie, pieDer, nota } : { logo: buho, marca: 'BÚHO AI', cab, pie, pieDer, nota }
-  return { kind: 'documento', meta, html, chrome, theme, css: cssOf(meta, baseDir), title, warnings }
+  const chrome = { logo: tema.logo ?? (buhoBase ? buho : ''), marca: tema.marca ?? (buhoBase ? 'BÚHO AI' : ''), cab, pie, pieDer, nota }
+  return { kind: 'documento', meta, html, chrome, theme: tema.base, tema, css: cssOf(meta, baseDir), title, warnings }
 }
 
 // ─── Presentación 16:9 ─────────────────────────────────────────────────────────────────────────
@@ -328,14 +343,18 @@ function slideParts(s: Slide): { head: string; headLine: number; cols: { text: s
   return { head, headLine: s.contentStart + i, cols }
 }
 
-function buildSlides(src: string, baseDir: string): Built {
+function buildSlides(src: string, baseDir: string, temaIn?: Tema): Built {
   const f = splitFront(src)
   const meta = f.meta
   const warnings: RenderWarning[] = f.error ? [{ line: 1, level: 'error', message: f.error }] : []
   const g = (...k: string[]): string | undefined => metaGet(meta, ...k)
   const title = g('titulo', 'título', 'title') ?? ''
-  const theme = themeOf(meta)
-  const pie = g('pie', 'footer') ?? (theme === 'blanco' ? title : title ? `Búho AI · ${title}` : 'Búho AI')
+  const tema = temaFinal(meta, temaIn)
+  const buhoBase = tema.base === 'buho'
+  const esBuho = tema.id === 'buho'
+  const pie = g('pie', 'footer') ?? tema.pie ?? (esBuho ? (title ? `Búho AI · ${title}` : 'Búho AI') : title)
+  const logo = tema.logo ?? (esBuho ? wordmark : '')
+  const icono = tema.logo ?? (esBuho ? buho : '')
   const slides = splitSlides(src)
   const total = slides.length
   const out = slides.map((s) => {
@@ -355,22 +374,19 @@ function buildSlides(src: string, baseDir: string): Built {
     const cols = nonEmpty.map((c) => `<div class="col" data-line="${c.line + 1}">${md.render(c.text, { ...env, lineOffset: c.line })}</div>`).join('')
     const body = nonEmpty.length > 1 ? `<div class="cols n${nonEmpty.length}">${cols}</div>` : nonEmpty.length ? md.render(nonEmpty[0].text, { ...env, lineOffset: nonEmpty[0].line }) : ''
     const img = s.directives.imagen ? `<img class="s-imagen" src="${fileUrl(s.directives.imagen, baseDir)}" alt="">` : ''
+    const portadaArbol = buhoBase && (tema.portada ?? 'arbol') === 'arbol'
     const chrome =
-      theme === 'blanco'
-        ? layout === 'portada'
-          ? ''
-          : `<footer class="s-pie"><span>${escHtml(pie)}</span><span class="s-num">${s.n} / ${total}</span></footer>`
-        : layout === 'portada'
-        ? `<img class="s-arbol" src="${arbolDeck}" alt=""><div class="s-logo"><img src="${wordmark}" alt="Búho AI"><div class="lema">${escHtml(g('lema') ?? 'Tu equipo técnico de IA')}</div></div><div class="s-web">Búho AI · buhoai.es</div><div class="s-barra-baja"></div>`
-        : `<footer class="s-pie"><img src="${buho}" alt=""><span>${escHtml(pie)}</span><span class="s-num">${s.n} / ${total}</span></footer><img class="s-marca" src="${marcaAgua}" alt="">`
+      layout === 'portada'
+        ? `${portadaArbol ? `<img class="s-arbol" src="${arbolDeck}" alt="">` : ''}${logo ? `<div class="s-logo"><img src="${logo}" alt="">${esBuho ? `<div class="lema">${escHtml(g('lema') ?? 'Tu equipo técnico de IA')}</div>` : ''}</div>` : ''}${esBuho ? '<div class="s-web">Búho AI · buhoai.es</div>' : ''}<div class="s-barra-baja"></div>`
+        : `<footer class="s-pie">${icono ? `<img src="${icono}" alt="">` : ''}<span>${escHtml(pie)}</span><span class="s-num">${s.n} / ${total}</span></footer>${buhoBase ? `<img class="s-marca" src="${marcaAgua}" alt="">` : ''}`
     return `<section class="slide d-${layout}${dark ? ' oscuro' : ''}${fondo && !dark ? ` f-${fondo}` : ''}${/^(arriba|top)$/i.test(s.directives.alinear ?? '') ? ' f-arriba' : ''}" data-slide="${s.n}" data-line="${s.start + 1}">
 <div class="s-barra"></div>${chrome}
 <div class="s-cuerpo">${etiqueta}<div class="s-head">${head}</div><div class="s-main">${img}${body}</div></div>
 ${s.directives.notas ? `<aside class="s-notas">${escHtml(s.directives.notas)}</aside>` : ''}</section>`
   })
-  return { kind: 'presentacion', meta, html: out.join('\n'), theme, css: cssOf(meta, baseDir), title, warnings }
+  return { kind: 'presentacion', meta, html: out.join('\n'), theme: tema.base, tema, css: cssOf(meta, baseDir), title, warnings }
 }
 
-export function build(src: string, baseDir: string): Built {
-  return kindOf(splitFront(src).meta) === 'presentacion' ? buildSlides(src, baseDir) : buildDoc(src, baseDir)
+export function build(src: string, baseDir: string, tema?: Tema): Built {
+  return kindOf(splitFront(src).meta) === 'presentacion' ? buildSlides(src, baseDir, tema) : buildDoc(src, baseDir, tema)
 }

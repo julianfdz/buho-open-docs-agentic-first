@@ -12,6 +12,11 @@ import * as docs from './docs'
 import { historyBefore, historyEntry, listHistory, tagNextChange } from './history'
 import { checkDoc, closeExporter, exportPdf, snapshot } from './exporter'
 import { template } from './templates'
+import { editBlock, readClean, search, type BlockEditMode } from '@shared/index-ai'
+import { indexOf, mdFiles } from './indexcache'
+import { crearTema, listarTemas, resolverTema, temasDir, type NuevoTema } from './temas'
+import { PLANTILLAS, desdePlantilla, plantillaById } from '@shared/plantillas'
+import { fechaHoy } from './templates'
 import { BLOCKS, blockById } from '@shared/blocks'
 import { readdirSync } from 'node:fs'
 import { startApi, stopApi } from './api'
@@ -72,6 +77,17 @@ function reveal(): void {
 
 // ─── API local / CLI ───────────────────────────────────────────────────────────────────────────
 
+/** Plantilla de serie o propia (<datos>/plantillas/<id>.md, que se copia tal cual). */
+function plantillaPor(id: string): { tipo: 'documento' | 'presentacion'; cuerpo: string; meta?: Record<string, string>; nombre: string } {
+  const p = plantillaById(id)
+  if (p) return p
+  const f = join(app.getPath('userData'), 'plantillas', id + '.md')
+  if (!existsSync(f)) throw new Error(`No existe la plantilla «${id}» (mira buho-docs plantillas)`)
+  const src = readFileSync(f, 'utf8')
+  const fr = splitFront(src)
+  return { tipo: kindOf(fr.meta), cuerpo: fr.body.replace(/^\s+/, ''), nombre: id }
+}
+
 const defaultPdf = (path: string): string => join(dirname(path), basename(path, extname(path)) + '.pdf')
 
 async function apiCall(method: string, p: Record<string, unknown>): Promise<unknown> {
@@ -104,7 +120,8 @@ async function apiCall(method: string, p: Record<string, unknown>): Promise<unkn
       }
     case 'new': {
       const kind: DocKind = /^(presentaci[oó]n|slides?|deck)$/i.test(s('kind') ?? '') ? 'presentacion' : 'documento'
-      const content = s('content') ?? template(kind, s('title'), s('subtitle'), s('estilo'))
+      const pl = s('plantilla') ? plantillaPor(s('plantilla')!) : null
+      const content = s('content') ?? (pl ? desdePlantilla(pl, s('title') ?? '', s('tema') ?? s('estilo') ?? 'buho', fechaHoy()) : template(kind, s('title'), s('subtitle'), s('tema') ?? s('estilo')))
       const d = docs.createDoc(need('path', 'ruta del nuevo .md'), content, s('author') ?? 'IA', 'ai')
       win?.webContents.send('open', d)
       reveal()
@@ -308,6 +325,76 @@ async function apiCall(method: string, p: Record<string, unknown>): Promise<unkn
       const n = Number(s('niveles')) || 2
       return result(await docs.applyChange(path(), (src) => setIndex(src, on, n), ai(on ? 'Índice automático' : 'Índice quitado')))
     }
+    case 'temas':
+      return { carpeta: temasDir(), temas: listarTemas().map(({ css, ...t }) => ({ ...t, css: css ? `${css.length} caracteres` : undefined })) }
+    case 'temaCrear': {
+      const n: NuevoTema = {
+        id: need('id', 'id del tema (minúsculas y guiones)'),
+        nombre: s('nombre'),
+        principal: need('principal', 'color principal #rrggbb'),
+        acento: need('acento', 'color de acento #rrggbb'),
+        suave: s('suave'),
+        texto: s('texto'),
+        titulos: s('titulos'),
+        fuenteTexto: s('fuenteTexto'),
+        logo: s('logo') ? resolve(s('logo')!) : undefined,
+        marca: s('marca'),
+        pie: s('pie'),
+        portada: s('portada') as NuevoTema['portada'],
+        base: s('base') as NuevoTema['base']
+      }
+      return crearTema(n)
+    }
+    case 'plantillas': {
+      const dir = join(app.getPath('userData'), 'plantillas')
+      mkdirSync(dir, { recursive: true })
+      const propias = readdirSync(dir).filter((f) => f.endsWith('.md')).map((f) => ({ id: f.replace(/\.md$/, ''), nombre: f.replace(/\.md$/, ''), tipo: 'documento', descripcion: 'Plantilla propia', propia: true }))
+      return { carpeta: dir, plantillas: [...PLANTILLAS.map(({ cuerpo, ...p }) => p), ...propias] }
+    }
+    case 'mapa': {
+      // Índice del documento para IAs: secciones con sus tokens (y, con bloques=true, cada bloque).
+      const target = path()
+      const ix = indexOf(target, await docs.current(target))
+      const conBloques = p.bloques === true || p.bloques === 'true'
+      return { path: target, title: ix.title, kind: ix.kind, hash: ix.hash, tokens: ix.tokens, nBlocks: ix.blocks.length, sections: ix.sections, blocks: conBloques ? ix.blocks.map(({ text, ...b }) => ({ ...b, preview: text.slice(0, 80) })) : undefined }
+    }
+    case 'leer': {
+      const target = path()
+      const ix = indexOf(target, await docs.current(target))
+      const r = readClean(ix, { section: s('seccion'), block: s('bloque'), from: s('desde'), maxTokens: Number(s('max')) || undefined, ids: p.ids === true || p.ids === 'true' })
+      return { path: target, hash: ix.hash, ...r }
+    }
+    case 'buscar': {
+      const q = need('q', 'qué buscar')
+      const limit = Number(s('limite')) || 10
+      const files = s('carpeta') ? mdFiles(resolve(s('carpeta')!)) : [path()]
+      const t0 = Date.now()
+      const hits = files.flatMap((f) => {
+        try {
+          const ix = docs.isOpen(f) ? indexOf(f, readFileSync(f, 'utf8')) : indexOf(f)
+          return search(ix, q, limit).map((h) => ({ ...h, path: f, section: h.path }))
+        } catch {
+          return []
+        }
+      })
+      hits.sort((a, b) => b.score - a.score)
+      return { q, files: files.length, ms: Date.now() - t0, hits: hits.slice(0, limit) }
+    }
+    case 'bloque': {
+      // Cambiar (o leer) un bloque por su id: #b… del mapa, leer --ids o buscar.
+      const target = path()
+      const id = need('id', 'id del bloque (#b…)').replace(/^#/, '')
+      const mode = (s('mode') ?? (p.content === undefined ? 'leer' : 'replace')) as BlockEditMode | 'leer'
+      if (mode === 'leer') {
+        const ix = indexOf(target, await docs.current(target))
+        const b = ix.blocks.find((x) => x.id === id)
+        if (!b) throw new Error(`No existe el bloque #${id} (mira buho-docs mapa)`)
+        const raw = (await docs.current(target)).split(/\r?\n/).slice(b.line - 1, b.end).join('\n')
+        return { ...b, markdown: raw }
+      }
+      const label: Record<string, string> = { replace: 'reescrito', before: 'bloque nuevo antes', after: 'bloque nuevo después', delete: 'eliminado' }
+      return result(await docs.applyChange(target, (src) => editBlock(src, id, mode, s('content') ?? ''), ai(`Bloque #${id} ${label[mode] ?? mode}`)))
+    }
     case 'tag': {
       const target = path()
       tagNextChange(target, s('author') ?? 'IA', Number(s('seconds')) || 120)
@@ -436,6 +523,26 @@ function registerIpc(): void {
   })
   ipcMain.handle('history', (_e, path: string) => listHistory(path, 300))
   ipcMain.handle('bloques', () => apiCall('bloques', {}))
+  ipcMain.handle('tema', (_e, id: string) => resolverTema(id))
+  ipcMain.handle('temas', () => listarTemas())
+  ipcMain.handle('crearTema', async (_e, n: NuevoTema) => {
+    try {
+      return { ok: true, tema: crearTema(n) }
+    } catch (e) {
+      return { ok: false, error: (e as Error).message }
+    }
+  })
+  ipcMain.handle('elegirLogo', async () => {
+    const r = await dialog.showOpenDialog(win!, { title: 'Logo del tema', filters: [{ name: 'Imagen', extensions: ['png', 'jpg', 'jpeg', 'svg', 'webp'] }], properties: ['openFile'] })
+    return r.canceled ? null : r.filePaths[0]
+  })
+  ipcMain.handle('plantillas', () => apiCall('plantillas', {}))
+  ipcMain.handle('crearDesdePlantilla', async (_e, id: string, tema: string) => {
+    const pl = plantillaPor(id)
+    const r = await dialog.showSaveDialog(win!, { title: `Nuevo: ${pl.nombre}`, defaultPath: join(app.getPath('documents'), pl.nombre + '.md'), filters: [{ name: 'Documento Markdown', extensions: ['md'] }] })
+    if (r.canceled || !r.filePath) return null
+    return docs.createDoc(r.filePath, desdePlantilla(pl, '', tema, fechaHoy()), 'Tú', 'user')
+  })
   ipcMain.handle('historyEntry', (_e, path: string, id: string) => historyEntry(path, id))
   ipcMain.handle('historyBefore', (_e, path: string, id: string) => historyBefore(path, id))
   ipcMain.handle('restore', async (_e, path: string, id: string) => {

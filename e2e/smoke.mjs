@@ -203,7 +203,7 @@ try {
   await page.keyboard.press('Control+z')
   check(await until(async () => text(doc).includes('Párrafo nuevo con Intro.') && !text(doc).includes('**Intro**'), 5000), 'Deshacer quita la negrita')
   // Estilo del párrafo: Título 2.
-  await page.locator('.fb-style').selectOption('h2')
+  await page.locator('.fb-style[title="Estilo del párrafo"]').selectOption('h2')
   check(await until(async () => /\n## Párrafo nuevo con Intro\.\n/.test(text(doc)), 5000), 'Estilo «Título 2» desde la barra')
   // Título de la portada (va a la cabecera YAML).
   const tit = frame.locator('[data-meta="titulo"]').first()
@@ -247,6 +247,32 @@ try {
 
   // Volver a la versión original para el resto de la prueba.
   await cli('restore', doc, first.id.slice(0, 8), '--author', 'Claude')
+
+  // ─── Lectura para IAs: mapa, buscar, leer y editar por id ─────────────────────────────────
+  const mp = await cliJson('mapa', doc)
+  check(mp.sections.length >= 4 && mp.tokens > 300 && mp.sections.every((s) => /^b[0-9a-z]+$/.test(s.id)), `mapa: ${mp.sections.length} secciones, ${mp.tokens} tokens`)
+  const bs = await cliJson('buscar', doc, 'facturas albaranes conciliacion')
+  check(bs.hits.length > 0 && /Administración/.test(bs.hits[0].section + bs.hits[0].snippet), `buscar encuentra la sección correcta (${bs.hits[0]?.section})`)
+  const typo = await cliJson('buscar', doc, 'facturacion')
+  check(typo.hits.length > 0, 'buscar tolera variantes y erratas («facturacion» ~ «facturas»)')
+  const lr = await cliJson('leer', doc, '--seccion', 'Tres tipos de beneficio', '--ids')
+  check(/\[#b[0-9a-z]+\]/.test(lr.text) && !/\*\*/.test(lr.text), `leer devuelve texto limpio con ids (${lr.tokens} tokens)`)
+  const idBloque = bs.hits[0].id
+  await cli('editar', doc, '#' + idBloque, '--text', '- **Administración**: texto cambiado por id.', '--author', 'Claude')
+  check(text(doc).includes('texto cambiado por id.'), 'editar por id cambia exactamente ese bloque')
+  const mp2 = await cliJson('mapa', doc)
+  check(mp.sections.every((s) => mp2.sections.some((x) => x.id === s.id)), 'Los ids de las secciones no cambian al editar otro bloque')
+
+  // Plantillas y temas
+  const fac = join(out, 'docs', 'factura.md')
+  await cli('new', fac, '--plantilla', 'factura', '--tema', 'corporativo')
+  check(/tema: corporativo/.test(text(fac)) && text(fac).includes('Base imponible'), 'new --plantilla factura --tema corporativo')
+  await cli('tema', 'crear', 'prueba', '--nombre', 'Prueba', '--principal', '#5b2a86', '--acento', '#f5a623', '--marca', 'PRUEBA')
+  await cli('tema', fac, 'prueba')
+  await frame.locator('.tema-id-prueba').first().waitFor({ timeout: 8000 })
+  check((await frame.locator('.pg-marca').first().innerText()).includes('PRUEBA'), 'Tema propio aplicado (marca en la cabecera)')
+  await cli('open', doc)
+  await frame.locator('.pg').first().waitFor()
 
   // PDF A4.
   const pdf = await cliJson('export', doc)

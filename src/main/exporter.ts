@@ -2,6 +2,9 @@ import { BrowserWindow } from 'electron'
 import { writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { RenderResult } from '@shared/types'
+import { splitFront } from '@shared/doc'
+import { temaDe } from '@shared/temas'
+import { resolverTema } from './temas'
 
 /**
  * Exportar a PDF y comprobar documentos sin tocar la ventana del usuario: una ventana oculta carga la
@@ -39,7 +42,8 @@ let shown: { path: string; source: string } | null = null
 async function render(source: string, path: string): Promise<RenderResult> {
   await printWindow()
   shown = { path, source }
-  const req = JSON.stringify({ source, baseDir: dirname(path) })
+  // El tema se resuelve aquí (los del usuario traen logo y CSS de su carpeta).
+  const req = JSON.stringify({ source, baseDir: dirname(path), tema: resolverTema(temaDe(splitFront(source).meta)) })
   return (await win!.webContents.executeJavaScript(`window.buhoRender(${req})`, true)) as RenderResult
 }
 

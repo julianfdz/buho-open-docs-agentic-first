@@ -1,5 +1,6 @@
 import type { RenderResult, RenderWarning } from '@shared/types'
 import { build } from './render'
+import { varsDe, type Tema } from '@shared/temas'
 import { paginate } from './paginate'
 import { enableEditing, flushEdit, installEditing, releaseHeld, restoreCaret, runCommand, saveCaret, typingRecently } from './visual-edit'
 import buhoCss from './buho.css?raw'
@@ -26,6 +27,8 @@ interface RenderRequest {
   editable?: boolean
   /** Dejar el cursor en esta línea al terminar (tras partir o unir bloques). */
   focus?: { line: number; offset: number }
+  /** Tema ya resuelto por la app (los del usuario llevan logo y CSS). */
+  tema?: Tema
 }
 
 declare global {
@@ -209,7 +212,7 @@ function brokenImages(el: HTMLElement): RenderWarning[] {
 
 async function renderNow(req: RenderRequest): Promise<RenderResult> {
   const t0 = performance.now()
-  const b = build(req.source, req.baseDir)
+  const b = build(req.source, req.baseDir, req.tema)
   const tBuild = performance.now()
   // Título del PDF (metadatos) al exportar.
   if (b.title) document.title = b.title
@@ -219,8 +222,14 @@ async function renderNow(req: RenderRequest): Promise<RenderResult> {
   const caret = req.editable ? saveCaret() : null
   const scroll = scrollY
   const next = document.createElement('div')
-  const cls = `${b.kind === 'presentacion' ? 'deck' : 'doc'} tema-${b.theme}`
+  const cls = `${b.kind === 'presentacion' ? 'deck' : 'doc'} tema-${b.theme} tema-id-${b.tema.id}`
   next.className = cls
+  // Colores y letras del tema (variables CSS) y su CSS propio.
+  const vars = varsDe(b.tema)
+  for (const [k, v] of Object.entries(vars)) next.style.setProperty(k, v)
+  const ts = document.head.querySelector<HTMLStyleElement>('style[data-tema]') ?? document.head.appendChild(Object.assign(document.createElement('style'), { textContent: '' }))
+  ts.dataset.tema = '1'
+  ts.textContent = b.tema.css ?? ''
   // Hoja de estilo propia del documento (cabecera css:).
   let link = document.head.querySelector<HTMLLinkElement>('link[data-css]')
   if (b.css) {
@@ -259,6 +268,7 @@ async function renderNow(req: RenderRequest): Promise<RenderResult> {
     const tmp = document.createElement('div')
     tmp.style.cssText = 'position:absolute;visibility:hidden;width:174mm'
     tmp.className = cls
+    for (const [k, v] of Object.entries(vars)) tmp.style.setProperty(k, v)
     tmp.appendChild(tpl.content)
     fillIndex(tmp, 'documento')
     root.appendChild(tmp)
@@ -278,6 +288,7 @@ async function renderNow(req: RenderRequest): Promise<RenderResult> {
   await document.fonts.ready
   current?.remove()
   next.style.cssText = ''
+  for (const [k, v] of Object.entries(vars)) next.style.setProperty(k, v)
   current = next
   fit()
   if (req.editable) {

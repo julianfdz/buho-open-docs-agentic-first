@@ -36,6 +36,13 @@ import { app } from 'electron'
  *   POST /v1/rellenar {"path","id","content"|"imagen","ancho","alt"} → rellena un hueco
  *   GET  /v1/huecos?path=                            → huecos pendientes
  *   POST /v1/indice   {"path","niveles","quitar"}     → índice automático
+ *   GET  /v1/temas · POST /v1/temas {"id","nombre","principal","acento","logo","marca","portada","base"…}
+ *   GET  /v1/plantillas                             → plantillas genéricas (y las propias)
+ *   GET  /v1/mapa?path=&bloques=true                → índice para IAs: secciones (y bloques) con tokens e ids
+ *   GET  /v1/leer?path=&seccion=&bloque=&desde=&max=&ids=true → texto limpio, con límite de tokens
+ *   GET  /v1/buscar?q=&path=|carpeta=&limite=       → dónde se habla de algo (BM25 + parecido, sin modelos)
+ *   GET  /v1/bloque?path=&id=                       → un bloque (texto limpio y Markdown)
+ *   POST /v1/bloque   {"path","id","content","mode"} → cambiar un bloque por su id (replace|before|after|delete)
  */
 export type ApiCall = (method: string, params: Record<string, unknown>) => Promise<unknown>
 
@@ -69,7 +76,15 @@ const ROUTES: Record<string, string> = {
   'POST /v1/insertar': 'insertar',
   'POST /v1/rellenar': 'rellenar',
   'GET /v1/huecos': 'huecos',
-  'POST /v1/indice': 'indice'
+  'POST /v1/indice': 'indice',
+  'GET /v1/mapa': 'mapa',
+  'GET /v1/temas': 'temas',
+  'POST /v1/temas': 'temaCrear',
+  'GET /v1/plantillas': 'plantillas',
+  'GET /v1/leer': 'leer',
+  'GET /v1/buscar': 'buscar',
+  'GET /v1/bloque': 'bloque',
+  'POST /v1/bloque': 'bloque'
 }
 
 export const DEFAULT_PORT = 47341
