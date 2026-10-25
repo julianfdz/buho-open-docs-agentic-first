@@ -1,6 +1,6 @@
-import { Previewer } from 'pagedjs-esm'
 import type { RenderResult, RenderWarning } from '@shared/types'
 import { build } from './render'
+import { paginate } from './paginate'
 import buhoCss from './buho.css?raw'
 import './screen.css'
 
@@ -60,6 +60,32 @@ function structure(el: ParentNode): void {
     const t = p.textContent ?? ''
     if (t && t === t.toUpperCase() && t.length < 60) p.classList.add('etiqueta')
   })
+  keepWithNext(el)
+}
+
+/**
+ * Un título nunca se queda solo al pie de la página: se une al bloque que le sigue (como «Conservar
+ * con el siguiente» de Word). Paged.js no respeta break-after: avoid entre bloques distintos.
+ */
+function keepWithNext(el: ParentNode): void {
+  for (const body of el.querySelectorAll('.cuerpo')) {
+    for (const h of [...body.querySelectorAll(':scope > h1, :scope > h2, :scope > h3, :scope > h4')]) {
+      if (h.parentElement !== body) continue
+      const group: Element[] = [h]
+      let next = h.nextElementSibling
+      // Títulos seguidos (## + ###) van juntos con el primer bloque de contenido.
+      while (next && /^H[1-4]$/.test(next.tagName)) {
+        group.push(next)
+        next = next.nextElementSibling
+      }
+      if (!next || next.classList.contains('salto')) continue
+      group.push(next)
+      const keep = document.createElement('div')
+      keep.className = 'keep'
+      body.insertBefore(keep, h)
+      for (const g of group) keep.appendChild(g)
+    }
+  }
 }
 
 // ─── Resaltado de cambios ──────────────────────────────────────────────────────────────────────
@@ -91,8 +117,8 @@ function flash(container: HTMLElement, lines: number[], reveal: boolean): void {
   let first: HTMLElement | null = null
   for (const el of hit) {
     // Paged.js puede partir un bloque entre páginas: se resaltan todos sus trozos.
-    const ref = el.dataset.ref
-    const parts = ref ? [...container.querySelectorAll<HTMLElement>(`[data-ref="${ref}"]`)] : [el]
+    // Un bloque partido entre páginas: se resaltan todos sus trozos.
+    const parts = el.dataset.line ? [...container.querySelectorAll<HTMLElement>(`${el.tagName.toLowerCase()}[data-line="${el.dataset.line}"]`)] : [el]
     for (const p of parts) {
       p.classList.remove('flash')
       void p.offsetWidth
@@ -142,6 +168,7 @@ function brokenImages(el: HTMLElement): RenderWarning[] {
 async function renderNow(req: RenderRequest): Promise<RenderResult> {
   const t0 = performance.now()
   const b = build(req.source, req.baseDir)
+  const tBuild = performance.now()
   // Título del PDF (metadatos) al exportar.
   if (b.title) document.title = b.title
   const tpl = document.createElement('template')
@@ -154,25 +181,37 @@ async function renderNow(req: RenderRequest): Promise<RenderResult> {
   root.appendChild(next)
   const warnings = [...b.warnings]
   let pages = 0
-  const oldStyles = [...document.head.querySelectorAll('style[data-pagedjs-inserted-styles], style[data-buho]')]
+  const st = document.head.querySelector<HTMLStyleElement>('style[data-buho]') ?? document.head.appendChild(Object.assign(document.createElement('style'), { textContent: buhoCss }))
+  st.dataset.buho = '1'
+  const pageRule = b.kind === 'presentacion' ? '@page { size: 13.3333in 7.5in; margin: 0; }' : '@page { size: A4; margin: 0; }'
+  const ps = document.head.querySelector<HTMLStyleElement>('style[data-page]') ?? document.head.appendChild(Object.assign(document.createElement('style'), { textContent: '' }))
+  ps.dataset.page = '1'
+  ps.textContent = pageRule
   if (b.kind === 'presentacion') {
-    const st = document.createElement('style')
-    st.dataset.buho = '1'
-    st.textContent = buhoCss + '\n@page { size: 13.3333in 7.5in; margin: 0; }'
-    document.head.appendChild(st)
     next.appendChild(tpl.content)
     await waitImages(next)
     pages = next.querySelectorAll('.slide').length
     pageWidth = 1280
   } else {
-    const previewer = new Previewer()
-    const flow = await previewer.preview(tpl.content, [{ [location.href.split('?')[0] + '#buho.css']: buhoCss + '\n' + b.pageCss }], next)
-    pages = flow?.total ?? next.querySelectorAll('.pagedjs_page').length
+    // Las imágenes tienen que haber cargado antes de medir.
+    const tmp = document.createElement('div')
+    tmp.style.cssText = 'position:absolute;visibility:hidden;width:174mm'
+    tmp.className = 'doc'
+    tmp.appendChild(tpl.content)
+    root.appendChild(tmp)
+    await waitImages(tmp)
+    await document.fonts.ready
+    const frag = document.createDocumentFragment()
+    while (tmp.firstChild) frag.appendChild(tmp.firstChild)
+    tmp.remove()
+    const r = paginate(frag, next, b.chrome!)
+    pages = r.pages
+    for (const el of r.tooBig) warnings.push({ line: Number(el.dataset.line) || undefined, level: 'aviso', message: 'Un bloque no cabe ni en una página entera: se corta (pártelo en trozos más pequeños)' })
     pageWidth = 794
   }
+  const tLayout = performance.now()
   await waitImages(next)
   await document.fonts.ready
-  oldStyles.forEach((s) => s.remove())
   current?.remove()
   next.style.cssText = ''
   current = next
@@ -189,7 +228,7 @@ async function renderNow(req: RenderRequest): Promise<RenderResult> {
   warnings.push(...brokenImages(next))
   if (!req.reveal) scrollTo(0, scroll)
   flash(next, req.flash ?? [], !!req.reveal)
-  return { kind: b.kind, pages, warnings, ms: Math.round(performance.now() - t0) }
+  return { kind: b.kind, pages, warnings, ms: Math.round(performance.now() - t0), timings: { markdown: Math.round(tBuild - t0), maquetar: Math.round(tLayout - tBuild), resto: Math.round(performance.now() - tLayout) } }
 }
 
 // Las peticiones se encadenan; si llegan varias mientras se pinta, solo cuenta la última.

@@ -415,15 +415,15 @@ tr,
 .salto {
   break-after: page;
 }
+.keep {
+  break-inside: avoid;
+}
+.doc .cuerpo > .keep:first-child > h2:first-child,
+.doc .cuerpo > .keep:first-child > h1:first-child {
+  margin-top: 0;
+}
 
 /* ─── Documento A4 ──────────────────────────────────────────────────────────────── */
-@page {
-  size: A4;
-  margin: 24mm 18mm 22mm 18mm;
-}
-@page portada {
-  margin: 0;
-}
 .doc {
   font-size: 10.5pt;
   line-height: 1.45;
@@ -458,7 +458,6 @@ tr,
 
 /* Portada */
 .portada {
-  page: portada;
   position: relative;
   height: 296.5mm;
   width: 210mm;
@@ -531,8 +530,6 @@ tr,
   right: -4mm;
   bottom: 14mm;
   width: 216mm;
-  opacity: 0.62;
-  filter: grayscale(1);
 }
 .p-web {
   position: absolute;
@@ -550,81 +547,89 @@ tr,
   background: var(--navy);
 }
 
-/* Cabecera y pie (cajas de margen de Paged.js) */
-.pagedjs_margin-top-left .pagedjs_margin-content,
-.pagedjs_margin-top-right .pagedjs_margin-content,
-.pagedjs_margin-bottom-left .pagedjs_margin-content,
-.pagedjs_margin-bottom-right .pagedjs_margin-content,
-.pagedjs_margin-bottom-center .pagedjs_margin-content {
-  font-family: var(--sans);
-}
-.pagedjs_margin-top-left .pagedjs_margin-content {
-  font-family: var(--serif);
-  font-weight: 700;
-  color: var(--navy);
-  font-size: 10pt;
-  letter-spacing: 0.04em;
-  padding-left: 7mm;
-  background: no-repeat left center / 5.2mm;
-  min-height: 6mm;
-  display: flex;
-  align-items: center;
-}
-.pagedjs_margin-top-right .pagedjs_margin-content {
-  color: var(--turq-d);
-  font-size: 8pt;
-  text-align: right;
-}
-.pagedjs_margin-bottom-left .pagedjs_margin-content,
-.pagedjs_margin-bottom-right .pagedjs_margin-content {
-  color: #7c8a9b;
-  font-size: 7.5pt;
-}
-.pagedjs_margin-bottom-right .pagedjs_margin-content {
-  text-align: right;
-}
-.pagedjs_margin-bottom-center .pagedjs_margin-content {
-  color: #8d99a8;
-  font-size: 7pt;
-  text-align: center;
-}
-.pagedjs_margin-top {
-  border-bottom: 0.3mm solid var(--linea);
-  grid-template-columns: 1fr 0 2fr !important;
-}
-.pagedjs_margin-bottom {
-  border-top: 0.3mm solid var(--linea);
-  grid-template-columns: 1fr 0 1fr !important;
+/* Páginas A4 (las crea paginate.ts): cabecera, cuerpo de 174 × 251 mm y pie */
+.pg {
   position: relative;
+  width: 210mm;
+  height: 297mm;
+  overflow: hidden;
+  background: #fff;
+  break-after: page;
 }
-.pagedjs_margin-bottom > .pagedjs_margin-bottom-left,
-.pagedjs_margin-bottom > .pagedjs_margin-bottom-right {
-  align-items: flex-start;
-  padding-top: 3mm;
-}
-.pagedjs_margin-bottom::after {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 6mm;
-  text-align: center;
-  color: #8d99a8;
-  font: 7pt var(--sans);
-}
-.pagedjs_portada_page .pagedjs_margin-top,
-.pagedjs_portada_page .pagedjs_margin-bottom {
-  border: 0;
-}
-.pagedjs_page:not(.pagedjs_portada_page) .pagedjs_sheet::before {
+.pg:not(.pg-portada)::before {
   content: '';
   position: absolute;
   inset: 0 0 auto 0;
   height: 1.6mm;
   background: var(--turq);
-  z-index: 3;
 }
-.pagedjs_sheet {
-  position: relative;
+.pg-cab {
+  position: absolute;
+  left: 18mm;
+  right: 18mm;
+  top: 9mm;
+  height: 9mm;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 0.3mm solid var(--linea);
+  font-family: var(--sans);
+}
+.pg-marca {
+  display: flex;
+  align-items: center;
+  gap: 2mm;
+  font-family: var(--serif);
+  font-weight: 700;
+  color: var(--navy);
+  font-size: 10pt;
+  letter-spacing: 0.04em;
+}
+.pg-marca img {
+  width: 5.2mm;
+  height: 5.2mm;
+}
+.pg-tema {
+  color: var(--turq-d);
+  font-size: 8pt;
+  white-space: pre;
+}
+.pg-cuerpo {
+  position: absolute;
+  left: 18mm;
+  right: 18mm;
+  top: 24mm;
+  height: 251mm;
+  overflow: hidden;
+}
+.pg-cuerpo > :first-child,
+.pg-cuerpo > .keep:first-child > :first-child {
+  margin-top: 0;
+}
+.pg-pie {
+  position: absolute;
+  left: 18mm;
+  right: 18mm;
+  bottom: 12mm;
+  padding-top: 2.5mm;
+  border-top: 0.3mm solid var(--linea);
+  display: flex;
+  justify-content: space-between;
+  color: #7c8a9b;
+  font: 7.5pt var(--sans);
+  white-space: pre;
+}
+.pg-nota {
+  position: absolute;
+  left: 18mm;
+  right: 18mm;
+  bottom: 6mm;
+  text-align: center;
+  color: #8d99a8;
+  font: 7pt var(--sans);
+}
+.pg-portada .portada {
+  break-after: auto;
 }
 
 /* ─── Presentación 16:9 (1280 × 720 = 13,33 × 7,5 pulgadas, como los decks de Búho) ─── */
@@ -820,8 +825,6 @@ tr,
   left: 250px;
   top: 30px;
   width: 1120px;
-  opacity: 0.42;
-  filter: grayscale(1);
   z-index: 0;
 }
 .s-logo {

@@ -3,9 +3,13 @@ import { kindOf, metaGet, splitFront, splitSlides, type Slide } from '@shared/do
 import type { DocKind, RenderWarning } from '@shared/types'
 import { CONTAINERS, LAYOUTS, LAYOUT_ALIAS } from '@shared/syntax'
 import { iconSvg } from './icons'
+import type { PageChrome } from './paginate'
 import buho from '../brand/buho.png'
 import wordmark from '../brand/wordmark.png'
 import arbol from '../brand/arbol.webp'
+// Árbol ya en gris y aclarado sobre blanco: sin filtros CSS, el PDF se imprime antes y pesa menos.
+import arbolDoc from '../brand/arbol-doc.jpg'
+import arbolDeck from '../brand/arbol-deck.jpg'
 import marcaAgua from '../brand/marca-agua.png'
 
 /**
@@ -29,8 +33,8 @@ export interface Built {
   kind: DocKind
   meta: Record<string, unknown>
   html: string
-  /** CSS que depende del documento (cabecera y pie de página). */
-  pageCss: string
+  /** Cabecera y pie de las páginas A4. */
+  chrome?: PageChrome
   title: string
   warnings: RenderWarning[]
 }
@@ -42,7 +46,6 @@ interface Env {
 }
 
 const escHtml = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-const cssStr = (s: string): string => `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, ' ')}"`
 
 /** Ruta local → URL que sirve la app (protocolo buho://). Las URL web y data: se dejan igual. */
 export function fileUrl(src: string, baseDir: string): string {
@@ -242,7 +245,7 @@ function buildDoc(src: string, baseDir: string): Built {
     ${g('destinatario', 'para', 'audience', 'cliente', 'client') ? `<div class="p-para">${escHtml(g('destinatario', 'para', 'audience', 'cliente', 'client')!)}</div>` : ''}
     ${datos ? `<div class="p-datos">${escHtml(datos)}</div>` : ''}
   </div>
-  <img class="p-arbol" src="${arbol}" alt="">
+  <img class="p-arbol" src="${arbolDoc}" alt="">
   <div class="p-web">Búho AI · buhoai.es</div>
   <div class="p-barra"></div>
 </section>\n`
@@ -252,19 +255,7 @@ function buildDoc(src: string, baseDir: string): Built {
   const pie = g('pie', 'footer') ?? 'Búho AI · Tu equipo técnico de IA · buhoai.es'
   const pieDer = g('pie-derecha', 'footer-right')
   const nota = g('nota-pie', 'aviso-pie', 'disclaimer')
-  // Pie como en los PDF de Búho: izquierda y derecha en una línea; la nota legal, centrada debajo.
-  const pageCss = `
-@page {
-  @top-left { content: "BÚHO AI"; }
-  @top-right { content: ${cssStr(cab)}; }
-  @bottom-left { content: ${cssStr(pie)}; }
-  @bottom-right { content: ${pieDer ? cssStr(pieDer) + ' "   ·   " ' : ''}counter(page) " / " counter(pages); }
-}
-@page portada { @top-left { content: none; } @top-right { content: none; } @bottom-left { content: none; } @bottom-right { content: none; } }
-.pagedjs_margin-top-left .pagedjs_margin-content { background-image: url("${buho}"); }
-${nota ? `.pagedjs_page:not(.pagedjs_portada_page) .pagedjs_margin-bottom::after { content: ${cssStr(nota)}; }` : ''}
-`
-  return { kind: 'documento', meta, html, pageCss, title, warnings }
+  return { kind: 'documento', meta, html, chrome: { logo: buho, cab, pie, pieDer, nota }, title, warnings }
 }
 
 // ─── Presentación 16:9 ─────────────────────────────────────────────────────────────────────────
@@ -321,14 +312,14 @@ function buildSlides(src: string, baseDir: string): Built {
     const img = s.directives.imagen ? `<img class="s-imagen" src="${fileUrl(s.directives.imagen, baseDir)}" alt="">` : ''
     const chrome =
       layout === 'portada'
-        ? `<img class="s-arbol" src="${arbol}" alt=""><div class="s-logo"><img src="${wordmark}" alt="Búho AI"><div class="lema">${escHtml(g('lema') ?? 'Tu equipo técnico de IA')}</div></div><div class="s-web">Búho AI · buhoai.es</div><div class="s-barra-baja"></div>`
+        ? `<img class="s-arbol" src="${arbolDeck}" alt=""><div class="s-logo"><img src="${wordmark}" alt="Búho AI"><div class="lema">${escHtml(g('lema') ?? 'Tu equipo técnico de IA')}</div></div><div class="s-web">Búho AI · buhoai.es</div><div class="s-barra-baja"></div>`
         : `<footer class="s-pie"><img src="${buho}" alt=""><span>${escHtml(pie)}</span><span class="s-num">${s.n} / ${total}</span></footer><img class="s-marca" src="${marcaAgua}" alt="">`
     return `<section class="slide d-${layout}${dark ? ' oscuro' : ''}${fondo && !dark ? ` f-${fondo}` : ''}${/^(arriba|top)$/i.test(s.directives.alinear ?? '') ? ' f-arriba' : ''}" data-slide="${s.n}" data-line="${s.start + 1}">
 <div class="s-barra"></div>${chrome}
 <div class="s-cuerpo">${etiqueta}<div class="s-head">${head}</div><div class="s-main">${img}${body}</div></div>
 ${s.directives.notas ? `<aside class="s-notas">${escHtml(s.directives.notas)}</aside>` : ''}</section>`
   })
-  return { kind: 'presentacion', meta, html: out.join('\n'), pageCss: '', title, warnings }
+  return { kind: 'presentacion', meta, html: out.join('\n'), title, warnings }
 }
 
 export function build(src: string, baseDir: string): Built {

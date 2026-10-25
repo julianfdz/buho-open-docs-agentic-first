@@ -69,6 +69,8 @@ export interface RenderResult {
   pages: number
   warnings: RenderWarning[]
   ms: number
+  /** Desglose del tiempo de pintado (ms). */
+  timings?: Record<string, number>
 }
 
 export interface RenderWarning {

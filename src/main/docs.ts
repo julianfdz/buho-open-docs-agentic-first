@@ -5,6 +5,7 @@ import { kindOf, splitFront, titleOf } from '@shared/doc'
 import type { ChangeKind, DocChange, OpenDoc, RecentDoc } from '@shared/types'
 import { addHistory, ensureBaseline } from './history'
 import { markOwnWrite, unwatchFile, watchFile } from './watcher'
+import { forget, warm } from './exporter'
 
 /**
  * Documentos abiertos. El archivo en disco es la fuente de verdad: la app guarda lo que escribes
@@ -83,6 +84,7 @@ export function openDoc(path: string, announce = false): OpenDoc {
     opened.push(path)
     ensureBaseline(path, content)
     watchFile(path, onDiskChange)
+    warm(path, content, 400)
   }
   const d = toOpen(path, known.get(key(path))!)
   touchRecent(d)
@@ -95,6 +97,7 @@ export function closeDoc(path: string): void {
   if (i >= 0) opened.splice(i, 1)
   known.delete(key(path))
   unwatchFile(path)
+  forget(path)
 }
 
 export function createDoc(path: string, content: string, author: string, kind: ChangeKind): OpenDoc {
@@ -116,6 +119,8 @@ export function saveUser(path: string, content: string): void {
   markOwnWrite(path)
   known.set(key(path), content)
   addHistory(path, { kind: 'user', author: 'Tú', summary: 'Editado en la app' }, content)
+  // Mientras escribes no se imprime nada: el PDF se prepara cuando paras un momento.
+  warm(path, content, 1500)
 }
 
 /** Contenido actual (lo que hay en disco; si la app tiene cambios sin guardar, los guarda antes). */
@@ -141,6 +146,7 @@ export async function applyChange(path: string, fn: (src: string) => string, who
   addHistory(path, who, after)
   const change: DocChange = { path, content: after, kind: who.kind, author: who.author, summary: who.summary, focus: who.kind === 'ai' }
   bridge.send('doc-change', change)
+  warm(path, after, 0)
   return { changed: true, content: after, path }
 }
 
@@ -149,6 +155,7 @@ function onDiskChange(path: string, text: string): void {
   if (known.get(key(path)) === text) return
   known.set(key(path), text)
   const entry = addHistory(path, { kind: 'external', author: 'Otro programa', summary: 'Cambiado en disco' }, text)
+  warm(path, text, 200)
   const kind = entry?.kind ?? 'external'
   bridge.send('doc-change', { path, content: text, kind, author: entry?.author ?? 'Otro programa', summary: entry?.summary ?? 'Cambiado en disco', focus: kind === 'ai' } satisfies DocChange)
 }

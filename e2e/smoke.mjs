@@ -53,7 +53,7 @@ try {
   await cli('open', doc)
   await page.waitForSelector('.cm-content', { timeout: 10000 })
   const frame = page.frameLocator('iframe.preview')
-  await frame.locator('.pagedjs_page').first().waitFor({ timeout: 20000 })
+  await frame.locator('.pg').first().waitFor({ timeout: 20000 })
   await page.waitForSelector('.status .pill')
   check((await page.locator('.tab.on').innerText()).includes('Beneficios'), 'El CLI abre el documento en una pestaña')
   await until(async () => /páginas/.test(await page.locator('.status').innerText()))
@@ -157,7 +157,7 @@ try {
 
   // Clic en la vista → el editor va a esa línea.
   await cli('open', doc)
-  await frame.locator('.pagedjs_page').first().waitFor()
+  await frame.locator('.pg').first().waitFor()
   await sleep(600)
   await frame.locator('h2', { hasText: 'Por dónde empezar' }).first().click()
   await sleep(300)

@@ -13,9 +13,7 @@ export default defineConfig({
     resolve: {
       alias: {
         '@': resolve('src/renderer/src'),
-        '@shared': resolve('src/shared'),
-        // Paged.js publica su versión ESM empaquetada fuera del mapa de exports.
-        'pagedjs-esm': resolve('node_modules/pagedjs/dist/paged.esm.js')
+        '@shared': resolve('src/shared')
       }
     },
     build: {

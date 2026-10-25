@@ -9,7 +9,8 @@ Documentos **A4** y presentaciones **16:9** en PDF, escritos en Markdown, con el
 Hacer un PDF bonito con una IA suele ser: pedirlo, esperar a que genere un script, ejecutarlo, abrir el PDF, ver la errata, volver a pedirlo… Búho Docs lo convierte en un documento vivo:
 
 - **Markdown con cabecera YAML** como fuente: la IA lo escribe de maravilla y tú lo entiendes.
-- **Vista previa = PDF**: la misma página que ves es la que imprime Chromium (A4 paginado con Paged.js; diapositivas de 13,33 × 7,5 pulgadas, como los decks de PowerPoint).
+- **Vista previa = PDF**: la misma página que ves es la que imprime Chromium (A4 con paginador propio: 20 páginas en ~40 ms; diapositivas de 13,33 × 7,5 pulgadas, como los decks de PowerPoint).
+- **PDF en caliente**: tras cada cambio la app prepara el PDF en segundo plano; `export` solo lo escribe (~0,1 s).
 - **Cambios de la IA en directo**: el editor y la vista se actualizan solos y resaltan lo que ha cambiado, sin perder tu cursor ni tu deshacer.
 - **Cambios pequeños**: la IA reescribe una sección, una diapositiva o una cifra (`section`, `slide`, `replace`, `meta`) en vez de regenerarlo todo.
 - **Historial** por documento: quién cambió qué (tú, Claude, Codex, otro programa), con las diferencias y vuelta a cualquier versión.
@@ -67,6 +68,10 @@ buho-docs skill                                        # la guía completa para 
 - Si la IA prefiere editar el `.md` con sus propias herramientas, la app lo detecta en directo; con `buho-docs tag <doc> --author Claude` antes, queda firmado en el historial.
 - API local en `127.0.0.1:47341` con token (`%APPDATA%\BuhoDocs\api.json`); rutas en [`src/main/api.ts`](src/main/api.ts).
 
+## Velocidad
+
+`node bench/velocidad.mjs` compara Búho Docs con la forma de siempre (un script de Python con reportlab) sobre el mismo Markdown de 20 páginas y los mismos 5 arreglos. Resultados en [`bench/resultados.md`](bench/resultados.md): cada arreglo se ve en directo en ~0,1 s y, con el tiempo normal que tarda un agente entre comandos, el PDF sale en ~0,1 s porque ya está hecho.
+
 ## Instalar o usar portable
 
 `npm run dist` genera en `dist/`:
@@ -86,7 +91,7 @@ npm run test:e2e   # app aislada: CLI, cambios en directo, autoguardado, histori
 npm run dist
 ```
 
-Stack: Electron 44 + electron-vite + React 19 + TypeScript, CodeMirror 6, markdown-it, Paged.js, Lucide. `BUHO_DATA_DIR` aísla los datos; `BUHO_API_PORT` cambia el puerto.
+Stack: Electron 44 + electron-vite + React 19 + TypeScript, CodeMirror 6, markdown-it, Lucide; paginador A4 propio (`src/renderer/src/preview/paginate.ts`). `BUHO_DATA_DIR` aísla los datos; `BUHO_API_PORT` cambia el puerto.
 
 ## Licencia
 
