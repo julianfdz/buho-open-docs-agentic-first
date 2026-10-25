@@ -375,7 +375,8 @@ tr,
   color: var(--turq);
 }
 .bx-panel h3,
-.doc .cuerpo .bx-panel h3 {
+.doc .cuerpo .bx-panel h3,
+.deck .bx-panel h3 {
   color: #fff;
   font-family: var(--sans);
   margin: 0 0 0.15em;

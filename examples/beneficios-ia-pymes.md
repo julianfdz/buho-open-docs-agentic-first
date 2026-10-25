@@ -19,7 +19,7 @@ La IA ya no es cosa de grandes empresas. En una pyme, **cada departamento tiene 
 ::: cifras 3
 - **8** departamentos con usos claros desde el primer mes
 - **3** tipos de beneficio: tiempo, calidad y servicio
-- **0 €** de formación si se bonifica por FUNDAE
+- **90** días para medir el antes y el después
 :::
 
 ## Qué gana cada departamento
