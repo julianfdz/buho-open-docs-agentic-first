@@ -187,6 +187,7 @@ async function pipeClaude(input, id) {
   let buf = ''
   let streamed = false
   let finalText = ''
+  let error = null
   for await (const chunk of input) {
     buf += chunk.toString('utf8')
     let nl
@@ -200,16 +201,18 @@ async function pipeClaude(input, id) {
         if (d?.type === 'text_delta') {
           streamed = true
           push(d.text)
-        } else if (ev.type === 'result' && typeof ev.result === 'string') finalText = ev.result
+        } else if (ev.type === 'result' && ev.is_error) error = String(ev.result ?? ev.subtype ?? 'error del modelo')
+        else if (ev.type === 'result' && typeof ev.result === 'string') finalText = ev.result
       } catch {
         /* línea que no es JSON */
       }
     }
   }
-  if (!streamed && finalText) push(finalText)
+  if (!streamed && finalText && !error) push(finalText)
   if (timer) clearTimeout(timer)
   flush()
   await sending
+  return { error, chars: streamed || finalText ? 1 : 0 }
 }
 
 function changed(r) {
@@ -482,8 +485,18 @@ switch (cmd) {
       ? 'Es el CONTENIDO de una diapositiva 16:9 (sin el título, que ya está). Muy breve: de 3 a 5 viñetas cortas, o un bloque «::: tarjetas 2» o «::: tarjetas 3» con «### Título {icon=reloj}» y una línea de texto por tarjeta, o un «::: cifras 3» con «- **cifra** texto». Como mucho 60 palabras.'
       : `Es el CUERPO de una sección de un documento A4 (sin el título, que ya está). Unas ${'${palabras}'} palabras. Párrafos claros, negritas para lo importante, alguna lista. Puedes usar como mucho un bloque visual: «::: caja icon=bombilla» … «:::», o «::: tarjetas 3» con «### Título {icon=reloj}» y texto, o una tabla Markdown.`
     const breve = 'Es el texto de una diapositiva de portada o de cierre: solo una o dos frases cortas (con alguna negrita), sin listas ni bloques.'
-    const prompt = (it, i) =>
+    // Modo convertir: la parte trae su texto original («fuente», o «fuente_archivo») y solo se maqueta.
+    const fuenteDe = (it) => it.fuente ?? (it.fuente_archivo ? readFileSync(it.fuente_archivo, 'utf8') : '')
+    const convertir = (it, i) =>
       [
+        `Convierte a Markdown de Búho Docs la parte ${i + 1} de ${items.length} («${it.titulo}») de un documento titulado «${plan.titulo ?? ''}». Es un texto extraído de un PDF o Word: los saltos de línea y columnas pueden estar rotos.`,
+        'Mantén TODO el contenido, con las mismas palabras y cifras: no resumas, no añadas, no inventes. Recompón párrafos, listas y tablas (las tablas como tablas Markdown | col | col |). Usa ### para los apartados internos. Si encaja, una idea clave en «::: caja icon=bombilla» … «:::».',
+        'No pongas el título de la parte (ya está). Devuelve solo el Markdown, sin bloques de código alrededor ni comentarios.',
+        '--- TEXTO ORIGINAL ---',
+        fuenteDe(it)
+      ].join('\n')
+    const prompt = (it, i) =>
+      fuenteDe(it) ? convertir(it, i) : [
         `Escribe en español de España, en Markdown, para ${deck ? 'una presentación' : 'un documento'} titulado «${plan.titulo ?? ''}».`,
         plan.contexto ? `Contexto: ${plan.contexto}` : '',
         `Parte ${i + 1} de ${items.length}: «${it.titulo}».`,
@@ -499,11 +512,21 @@ switch (cmd) {
       const st = await call('POST', '/v1/stream/start', { path, hueco: id(i), author: quien, summary: `${items.length} ${deck ? 'diapositivas' : 'secciones'} generadas en paralelo` })
       const child = spawn('claude', ['-p', '--model', modelo, '--output-format', 'stream-json', '--include-partial-messages', '--verbose'], { shell: process.platform === 'win32', stdio: ['pipe', 'pipe', 'ignore'] })
       child.stdin.end(prompt(it, i))
-      await pipeClaude(child.stdout, st.id)
+      const res = await pipeClaude(child.stdout, st.id)
+      if (res.error || !res.chars) {
+        // El hueco vuelve (con el motivo) para poder reintentar esa parte.
+        const why = (res.error ?? 'el modelo no ha devuelto texto').replace(/"/g, "'").slice(0, 120)
+        await call('POST', '/v1/stream/chunk', { id: st.id, text: `::: hueco id=${id(i)} texto="Falló: ${why}"\n:::` })
+        await call('POST', '/v1/stream/end', { id: st.id })
+        fallos.push(`${it.titulo}: ${why}`)
+        process.stderr.write(`  ✗ ${it.titulo} · ${why}\n`)
+        return null
+      }
       const r = await call('POST', '/v1/stream/end', { id: st.id })
       process.stderr.write(`  ✓ ${it.titulo} · ${r.chars} caracteres · ${((Date.now() - t) / 1000).toFixed(1)} s\n`)
       return r
     }
+    const fallos = []
     const queue = items.map((it, i) => () => runOne(it, i))
     await Promise.all(Array.from({ length: Math.min(paralelo, queue.length) }, async () => {
       while (queue.length) await queue.shift()()
@@ -514,6 +537,10 @@ switch (cmd) {
     else {
       print(`Hecho en ${total} s: ${ck.pages} ${deck ? 'diapositivas' : 'páginas'} · ${path}`)
       for (const w of ck.warnings) print(`  ${w.level === 'error' ? 'ERROR' : 'aviso'}${w.slide ? ` diap. ${w.slide}` : ''}${w.line ? ` línea ${w.line}` : ''}: ${w.message}`)
+    }
+    if (fallos.length) {
+      process.stderr.write(`\n${fallos.length} parte(s) fallaron y quedan como hueco:\n  ${fallos.join('\n  ')}\n${/auth|login|OAuth/i.test(fallos.join(' ')) ? 'Parece que la sesión de claude ha caducado: abre una terminal, ejecuta «claude» e inicia sesión.\n' : ''}`)
+      process.exit(1)
     }
     break
   }
