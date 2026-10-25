@@ -1,0 +1,54 @@
+{
+  "name": "buho-open-docs",
+  "productName": "Búho Docs",
+  "version": "0.1.0",
+  "description": "Búho Docs: documentos A4 y presentaciones 16:9 en PDF escritos en Markdown, con editor, vista previa en vivo, cambios de la IA en directo e historial. Agentic first: CLI y skill para cualquier agente. Buho Corps Systems.",
+  "author": {
+    "name": "Buho Corps Systems"
+  },
+  "homepage": "https://github.com/julianfdz/buho-open-docs-agentic-first",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/julianfdz/buho-open-docs-agentic-first.git"
+  },
+  "license": "MIT",
+  "private": true,
+  "main": "./out/main/index.js",
+  "bin": {
+    "buho-docs": "bin/buho-docs.mjs"
+  },
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "start": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "test:e2e": "npm run build && node e2e/smoke.mjs",
+    "dist": "npm run build && electron-builder --win && node scripts/make-portable.mjs",
+    "dist:portable": "npm run build && electron-builder --win --dir && node scripts/make-portable.mjs"
+  },
+  "devDependencies": {
+    "@codemirror/lang-markdown": "6.5.2",
+    "@codemirror/lang-yaml": "^6.1.3",
+    "@codemirror/language": "^6.13.1",
+    "@lezer/highlight": "^1.2.5",
+    "@types/markdown-it": "14.1.2",
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "codemirror": "6.0.2",
+    "electron": "^44.9.0",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^6.0.0",
+    "lucide": "1.59.0",
+    "lucide-react": "1.59.0",
+    "markdown-it": "14.1.0",
+    "pagedjs": "0.4.3",
+    "playwright": "^1.64.1",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4",
+    "yaml": "2.8.1"
+  }
+}

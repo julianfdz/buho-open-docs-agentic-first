@@ -1,0 +1,87 @@
+/* Vista previa en pantalla (no sale en el PDF). */
+@media screen {
+  html {
+    background: #e8ecf1;
+  }
+  html.print-mode {
+    background: #fff;
+  }
+  body {
+    margin: 0;
+    padding: 20px 0 60px;
+  }
+  .print-mode body {
+    padding: 0;
+  }
+  #root > .doc,
+  #root > .deck {
+    width: fit-content;
+    margin: 0 auto;
+  }
+  .doc .pagedjs_pages {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+  .doc .pagedjs_page,
+  .deck .slide {
+    background: #fff;
+    box-shadow: 0 2px 12px rgba(10, 31, 58, 0.16);
+  }
+  .deck {
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+  }
+  .deck .slide.overflow {
+    outline: 4px dashed #e5484d;
+    outline-offset: -4px;
+  }
+  .deck .slide.overflow::after {
+    content: 'No cabe: sobra contenido';
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    background: #e5484d;
+    color: #fff;
+    font: 700 15px Calibri, sans-serif;
+    padding: 6px 12px;
+    border-radius: 6px;
+    z-index: 10;
+  }
+  [data-line] {
+    cursor: text;
+  }
+  .flash {
+    animation: buho-flash 2.6s ease-out;
+  }
+  .locate {
+    animation: buho-locate 1.4s ease-out;
+  }
+  @keyframes buho-flash {
+    0%,
+    35% {
+      background-color: rgba(0, 193, 184, 0.32);
+      box-shadow: 0 0 0 4px rgba(0, 193, 184, 0.32);
+    }
+    100% {
+      box-shadow: 0 0 0 4px rgba(0, 193, 184, 0);
+    }
+  }
+  @keyframes buho-locate {
+    0% {
+      box-shadow: 0 0 0 3px rgba(10, 31, 58, 0.35);
+    }
+    100% {
+      box-shadow: 0 0 0 3px rgba(10, 31, 58, 0);
+    }
+  }
+}
+@media print {
+  body {
+    margin: 0;
+  }
+  .deck .slide {
+    break-after: page;
+  }
+}

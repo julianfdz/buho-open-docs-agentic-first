@@ -1,0 +1,41 @@
+appId: es.buhoai.docs
+productName: Búho Docs
+copyright: © 2026 Buho Corps Systems
+directories:
+  output: dist
+  buildResources: build
+files:
+  - out/**
+  - package.json
+  - build/icon.png
+# Agentic first: el CLI y su guía para agentes van dentro de la carpeta del programa
+# (<instalación>\cli, que el instalador añade al PATH) y la guía también en la raíz.
+extraFiles:
+  - from: bin/buho-docs.mjs
+    to: cli/buho-docs.mjs
+  - from: build/cli
+    to: cli
+  - from: skills/buho-docs/SKILL.md
+    to: cli/SKILL.md
+  - from: skills/buho-docs/SKILL.md
+    to: SKILL.md
+  - from: examples
+    to: ejemplos
+win:
+  icon: build/icon.png
+  executableName: BuhoDocs
+  legalTrademarks: Buho Corps Systems
+  target:
+    - target: nsis
+      arch: [x64]
+  # La versión portable es un .zip con la carpeta de la app (scripts/make-portable.mjs).
+  artifactName: Buho-Docs-${version}-${arch}.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Búho Docs
+  # Carpeta de instalación fija y corta (la usan el CLI y la guía para agentes).
+  include: build/installer.nsh

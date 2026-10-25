@@ -1,0 +1,6 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Lanzadores del CLI: el de Git Bash/WSL con LF y el de cmd con CRLF.
+build/cli/buho-docs text eol=lf
+*.cmd text eol=crlf
