@@ -6,3 +6,4 @@ dist/
 e2e/.out/
 .secrets/
 bench/.out/
+e2e/.*/
