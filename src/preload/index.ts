@@ -37,6 +37,7 @@ const api: BuhoDocsApi = {
   revision: (method, params) => ipcRenderer.invoke('revision', method, params),
   atender: (path) => ipcRenderer.invoke('atender', path),
   onRevision: (cb) => on('revision', cb),
+  onComentarAqui: (cb) => on('comentarAqui', cb),
   history: (path) => ipcRenderer.invoke('history', path),
   historyEntry: (path, id) => ipcRenderer.invoke('historyEntry', path, id),
   historyBefore: (path, id) => ipcRenderer.invoke('historyBefore', path, id),

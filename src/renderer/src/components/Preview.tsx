@@ -16,6 +16,7 @@ export type VisualMsg =
   | { type: 'key'; key: string; shift: boolean }
   | { type: 'caret'; line: number }
   | { type: 'comentar'; line: number; cita: string; seleccion?: string }
+  | { type: 'ctx'; line: number; cita: string; seleccion?: string }
 
 interface Props {
   source: string
@@ -56,7 +57,7 @@ export default function Preview(p: Props): React.JSX.Element {
       if (m?.type === 'ready') setReady(true)
       else if (m?.type === 'rendered' && m.id === seq.current) props.current.onRendered(m.result)
       else if (m?.type === 'click') props.current.onPick(m)
-      else if (['edit', 'split', 'merge', 'focus', 'undo', 'redo', 'key', 'caret', 'comentar'].includes(m?.type)) props.current.onVisual(m)
+      else if (['edit', 'split', 'merge', 'focus', 'undo', 'redo', 'key', 'caret', 'comentar', 'ctx'].includes(m?.type)) props.current.onVisual(m)
     }
     addEventListener('message', onMsg)
     return () => removeEventListener('message', onMsg)

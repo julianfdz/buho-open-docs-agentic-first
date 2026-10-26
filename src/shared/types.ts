@@ -132,6 +132,8 @@ export interface BuhoDocsApi {
   /** Un agente por bloque comentado, a la vez; devuelve cuando acaban todos. */
   atender(path: string): Promise<{ ok: boolean; salida: string }>
   onRevision(cb: (m: { path: string }) => void): () => void
+  /** «Comentar…» del menú del clic derecho sobre la página. */
+  onComentarAqui(cb: () => void): () => void
   history(path: string): Promise<HistoryItem[]>
   historyEntry(path: string, id: string): Promise<HistoryEntry | null>
   /** Contenido justo antes de una entrada (para enseñar qué cambió). */

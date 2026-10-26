@@ -65,6 +65,8 @@ export default function App(): React.JSX.Element {
   const [comentando, setComentando] = useState(false)
   const [revDraft, setRevDraft] = useState<{ line: number; cita: string; seleccion?: string; nonce: number } | null>(null)
   const [enviando, setEnviando] = useState<string | null>(null)
+  /** Último clic derecho sobre la página (para «Comentar…» del menú). */
+  const ctxRef = useRef<{ line: number; cita: string; seleccion?: string } | null>(null)
   const [toast, setToast] = useState<{ msg: string; ai?: boolean; action?: { label: string; run: () => void } } | null>(null)
   const [conflict, setConflict] = useState<DocChange | null>(null)
   const [saving, setSaving] = useState(false)
@@ -214,6 +216,9 @@ export default function App(): React.JSX.Element {
       const tb = tabsRef.current.find((x) => x.path === activeRef.current)
       if (!tb) return
       switch (m.type) {
+        case 'ctx':
+          ctxRef.current = m.line ? { line: m.line, cita: m.cita, seleccion: m.seleccion } : null
+          return
         case 'comentar':
           setPanel('revision')
           setRevDraft({ line: m.line, cita: m.cita, seleccion: m.seleccion, nonce: ++nonce })
@@ -321,6 +326,12 @@ export default function App(): React.JSX.Element {
       window.buho.onOpen((d) => addTab(d)),
       window.buho.onDocChange((c) => applyChange(c)),
       window.buho.onRevision(() => setRevTick((n) => n + 1)),
+      window.buho.onComentarAqui(() => {
+        const c = ctxRef.current
+        if (!c) return
+        setPanel('revision')
+        setRevDraft({ ...c, nonce: ++nonce })
+      }),
       window.buho.onShow((m) => {
         setActive(m.path)
         if (m.line) setJump({ line: m.line, nonce: ++nonce })

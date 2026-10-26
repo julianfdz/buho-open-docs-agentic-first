@@ -715,6 +715,9 @@ function createWindow(): void {
   // Corrector ortográfico: clic derecho sobre una palabra subrayada → sugerencias.
   win.webContents.on('context-menu', (_e, params) => {
     const items: Electron.MenuItemConstructorOptions[] = []
+    // Sobre la página (no en el editor de Markdown): comentar ese bloque o lo seleccionado.
+    const enPagina = /preview\.html/.test(params.frame?.url ?? '')
+    if (enPagina) items.push({ label: params.selectionText ? 'Comentar lo seleccionado…' : 'Comentar aquí…', click: () => win?.webContents.send('comentarAqui', {}) }, { type: 'separator' })
     for (const s of params.dictionarySuggestions.slice(0, 6)) items.push({ label: s, click: () => win?.webContents.replaceMisspelling(s) })
     if (params.misspelledWord) {
       if (!params.dictionarySuggestions.length) items.push({ label: 'Sin sugerencias', enabled: false })
@@ -722,6 +725,7 @@ function createWindow(): void {
     }
     if (params.isEditable) items.push({ role: 'undo', label: 'Deshacer' }, { role: 'redo', label: 'Rehacer' }, { type: 'separator' }, { role: 'cut', label: 'Cortar' }, { role: 'copy', label: 'Copiar' }, { role: 'paste', label: 'Pegar' }, { role: 'selectAll', label: 'Seleccionar todo' })
     else if (params.selectionText) items.push({ role: 'copy', label: 'Copiar' })
+    if (items[items.length - 1]?.type === 'separator') items.pop()
     if (items.length) Menu.buildFromTemplate(items).popup()
   })
   if (process.env.ELECTRON_RENDERER_URL) void win.loadURL(process.env.ELECTRON_RENDERER_URL)

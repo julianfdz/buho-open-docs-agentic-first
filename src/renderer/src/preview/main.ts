@@ -381,6 +381,12 @@ if (!printMode) {
     }
   })
   installEditing()
+  // Clic derecho: la app sabrá sobre qué bloque (y qué selección) es el «Comentar…» del menú.
+  addEventListener('contextmenu', (e: MouseEvent) => {
+    const el = (e.target as HTMLElement).closest<HTMLElement>('[data-line]')
+    const sel = (getSelection()?.toString() ?? '').replace(/\s+/g, ' ').trim()
+    parent.postMessage({ type: 'ctx', line: el ? Number(el.dataset.line) : 0, cita: sel.slice(0, 400), seleccion: sel ? sel.slice(0, 400) : undefined }, '*')
+  })
   // Comentando: clic en un bloque (o seleccionar un trozo) → comentario sobre eso.
   addEventListener(
     'mouseup',
