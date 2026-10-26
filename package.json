@@ -1,7 +1,7 @@
 {
   "name": "buho-open-docs",
   "productName": "Búho Docs",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Búho Docs: documentos A4 y presentaciones 16:9 en PDF escritos en Markdown, con editor, vista previa en vivo, cambios de la IA en directo e historial. Agentic first: CLI y skill para cualquier agente. Buho Corps Systems.",
   "author": {
     "name": "Buho Corps Systems"
@@ -56,6 +56,7 @@
     "docx": "9.8.1",
     "mammoth": "1.13.0",
     "pdfjs-dist": "6.4.299",
+    "pptxgenjs": "4.0.1",
     "turndown": "7.2.4",
     "turndown-plugin-gfm": "1.0.2"
   }

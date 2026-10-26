@@ -31,6 +31,8 @@ import { kindOf, metaGet, splitFront, splitSlides } from '@shared/doc'
 import { newBuhoMd, parseAttrs } from '@shared/mdcore'
 import { temaDe, type Tema } from '@shared/temas'
 import { resolverTema } from './temas'
+import { ChartRun, type ChartRunOptions } from 'docx/charts'
+import { PALETA, type DatosGrafico } from '@shared/grafico'
 import wordmarkPath from '../renderer/src/brand/wordmark.png?asset'
 
 /**
@@ -398,6 +400,12 @@ export async function exportDocx(source: string, docPath: string, baseDir: strin
               out.push(new TableOfContents('Índice', { hyperlink: true, headingStyleRange: `1-${hasta}`, cachedEntries: entradas.map((h) => ({ title: h.title, level: h.level - min + 1 })) }) as unknown as Paragraph, new Paragraph({ children: [new PageBreak()] }))
               break
             }
+            case 'grafico': {
+              const gd = (t.meta as { grafico?: DatosGrafico }).grafico
+              if (gd) out.push(new Paragraph({ children: [graficoWord(gd, deck ? 820 : 600)], spacing: { before: 120, after: 160 }, keepLines: true }))
+              out.push(...bloques(inner, { ...ctx, color: '5D6B7C', size: 18 }))
+              break
+            }
             case 'hueco':
               out.push(new Paragraph({ children: [new TextRun({ text: `[Pendiente: ${a.kv.texto ?? a.kv.id ?? ''}]`, italics: true, color: '888888' })] }))
               break
@@ -515,4 +523,23 @@ export async function exportDocx(source: string, docPath: string, baseDir: strin
     ]
   })
   return { buffer: await Packer.toBuffer(doc) }
+}
+
+/** Gráfico nativo de Word (editable, con sus datos): mismos colores y orden que en el PDF. */
+function graficoWord(g: DatosGrafico, ancho: number): ChartRun {
+  const col = PALETA.map((c) => c.replace('#', ''))
+  const fmt = g.unidad === '%' ? '0" %"' : g.unidad === '€' ? '#,##0" €"' : g.unidad ? `#,##0.##" ${g.unidad}"` : '#,##0.##'
+  const base = { title: g.titulo, legend: g.series.length > 1 ? { position: 'bottom' as const } : (false as const), font: { name: 'Calibri' }, transformation: { width: ancho, height: Math.round(ancho * 0.52) } }
+  const cat = { categories: g.categorias, series: g.series.map((s, k) => ({ name: s.nombre, values: s.valores, color: col[k] })), dataLabels: g.categorias.length * g.series.length <= 14 ? { value: true, numberFormat: fmt } : undefined }
+  const opts: ChartRunOptions =
+    g.tipo === 'tarta' || g.tipo === 'donut'
+      ? { ...base, type: g.tipo === 'tarta' ? 'pie' : 'doughnut', legend: { position: 'right' }, categories: g.categorias, series: [{ name: g.series[0].nombre, values: g.series[0].valores.map((v) => (v === null ? null : Math.max(0, v))), colors: g.categorias.map((_, k) => col[k % col.length]) }], dataLabels: { percentage: true } }
+      : g.tipo === 'barras'
+        ? { ...base, ...cat, type: 'bar', gapWidth: 80 }
+        : g.tipo === 'lineas'
+          ? { ...base, ...cat, type: 'line', markers: true }
+          : g.tipo === 'area'
+            ? { ...base, ...cat, type: 'area' }
+            : { ...base, ...cat, type: 'column', gapWidth: 80 }
+  return new ChartRun(opts)
 }

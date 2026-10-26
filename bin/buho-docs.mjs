@@ -9,6 +9,17 @@
  *   buho-docs new <archivo.md> [--kind documento|presentacion] [--title "…"] [--subtitle "…"] [--file contenido.md]
  *   buho-docs nuevo [nombre] [--plantilla acta] [--tema id] [--file c.md]  # borrador sin guardar (imprime su ruta)
  *   buho-docs guardar <borrador.md> <destino.md>   # guardar un borrador donde se quiera
+ *
+ *   Revisión (control de cambios y comentarios):
+ *   buho-docs <cualquier cambio> … --proponer       # el cambio queda como propuesta en vez de escribirse
+ *   buho-docs revision <archivo.md> [si|no]          # modo revisión: todo cambio de la IA llega como propuesta
+ *   buho-docs propuestas <archivo.md>                # pendientes, con su diff
+ *   buho-docs aceptar|rechazar <archivo.md> <id|todas>
+ *   buho-docs comentarios <archivo.md> [--abiertos]  # con su línea y su bloque (#id)
+ *   buho-docs comentar <archivo.md> "texto" (--cita "…" | --bloque #b… | --linea N)
+ *   buho-docs responder <archivo.md> <id> "respuesta" [--resolver] · resolver <archivo.md> <id>
+ *   buho-docs atender <archivo.md> [--directo] [--modelo sonnet]  # un agente por bloque comentado, a la vez
+ *
  *   buho-docs open <archivo.md>                     (lo abre y lo enseña)
  *   buho-docs read <archivo.md> [--lines]           (contenido; --lines con números de línea)
  *   buho-docs outline <archivo.md>                  (títulos y diapositivas con su línea)
@@ -18,7 +29,7 @@
  *   buho-docs slide <archivo.md> <n> --file diapo.md [--mode replace|insert|delete|move] [--to N]
  *   buho-docs append <archivo.md> --file mas.md
  *   buho-docs meta <archivo.md> <campo> ["valor"]   (cabecera; sin valor lo quita)
- *   buho-docs export <archivo.md> [--out archivo.pdf] [--word]   # --word (o --out x.docx): Word editable
+ *   buho-docs export <archivo.md> [--out archivo.pdf] [--word|--pptx] [--drive]   # Word / PowerPoint editables; --drive: a Google Drive
  *   buho-docs check <archivo.md>                    (páginas y avisos: diapositivas que no caben, imágenes…)
  *   buho-docs history <archivo.md> [--limit 20] | diff <archivo.md> [id] | restore <archivo.md> <id>
  *   buho-docs show <archivo.md> [--line N]          (lo enseña en la app, en esa línea)
@@ -59,7 +70,7 @@ const portableDir = existsSync(join(here, '..', 'portable.txt')) ? join(here, '.
 const dataDir = process.env.BUHO_DATA_DIR || portableDir || join(process.env.APPDATA || join(process.env.HOME || '', '.config'), 'BuhoDocs')
 
 
-const FLAGS = new Set(['all', 'lines', 'json', 'no-launch', 'stdin', 'path', 'help', 'claude', 'quitar', 'ids', 'bloques', 'borrar', 'captura', 'ia', 'rapido', 'word'])
+const FLAGS = new Set(['all', 'lines', 'json', 'no-launch', 'stdin', 'path', 'help', 'claude', 'quitar', 'ids', 'bloques', 'borrar', 'captura', 'ia', 'rapido', 'word', 'proponer', 'todas', 'abiertos', 'resolver', 'directo', 'pptx', 'powerpoint', 'office', 'drive'])
 function parseArgs(argv) {
   const pos = []
   const opt = {}
@@ -148,7 +159,10 @@ async function httpCall(method, path, body) {
   if (!res.ok) die(`Error: ${data.error ?? res.status}`)
   return data
 }
-const call = io.call ?? httpCall
+const call0 = io.call ?? httpCall
+/** --proponer en cualquier comando que cambie el documento: queda como propuesta (control de cambios). */
+const call = (method, path, body) =>
+  call0(method, path, method === 'POST' && body && (opt.proponer || typeof opt.comentario === 'string') ? { ...body, ...(opt.proponer ? { proponer: true } : {}), ...(typeof opt.comentario === 'string' ? { comentario: opt.comentario.replace(/^#/, '') } : {}) } : body)
 
 const qs = (o) => {
   const p = new URLSearchParams()
@@ -347,11 +361,13 @@ switch (cmd) {
   }
   case 'export': {
     const path = file(0)
+    const pp = opt.pptx || opt.powerpoint || /^(pptx|powerpoint)$/i.test(String(opt.formato ?? '')) || /\.pptx$/i.test(String(opt.out ?? ''))
     const word = opt.word || /^(docx|word)$/i.test(String(opt.formato ?? '')) || /\.docx$/i.test(String(opt.out ?? ''))
-    io.err(word ? 'Exportando a Word…\n' : 'Exportando a PDF…\n')
-    const r = await call('POST', '/v1/export', { path, out: typeof opt.out === 'string' ? R(opt.out) : undefined, formato: word ? 'docx' : undefined })
+    const office = pp || word || opt.office || opt.drive
+    io.err(pp ? 'Exportando a PowerPoint…\n' : word ? 'Exportando a Word…\n' : office ? 'Exportando…\n' : 'Exportando a PDF…\n')
+    const r = await call('POST', '/v1/export', { path, out: typeof opt.out === 'string' ? R(opt.out) : undefined, formato: pp ? 'pptx' : word ? 'docx' : office ? 'office' : undefined, drive: !!opt.drive })
     if (opt.json) { out(r); break }
-    if (word) { print(`Word: ${r.file} · ${(r.bytes / 1024).toFixed(0)} KB`); break }
+    if (office) { print(`${r.file.endsWith('.pptx') ? 'PowerPoint' : 'Word'}: ${r.file} · ${(r.bytes / 1024).toFixed(0)} KB${r.slides ? ` · ${r.slides} diapositivas` : ''}${r.drive ? '\n' + r.message : ''}`); break }
     print(`PDF: ${r.file} · ${r.pages} ${r.kind === 'presentacion' ? 'diapositivas' : 'páginas'} · ${(r.bytes / 1024).toFixed(0)} KB`)
     for (const w of r.warnings) print(`  ${w.level === 'error' ? 'ERROR' : 'aviso'}${w.slide ? ` diap. ${w.slide}` : ''}${w.line ? ` línea ${w.line}` : ''}: ${w.message}`)
     break
@@ -630,6 +646,144 @@ switch (cmd) {
     }
     if (fallos.length) {
       io.err(`\n${fallos.length} parte(s) fallaron y quedan como hueco:\n  ${fallos.join('\n  ')}\n${/auth|login|OAuth/i.test(fallos.join(' ')) ? 'Parece que la sesión de claude ha caducado: abre una terminal, ejecuta «claude» e inicia sesión.\n' : ''}`)
+      exitWith(1)
+    }
+    break
+  }
+  // ─── Revisión: propuestas y comentarios ───
+  case 'revision': {
+    const path = file(0)
+    const modo = args[1]
+    const r = await call(modo ? 'POST' : 'GET', '/v1/revision' + (modo ? '' : qs({ path })), modo ? { path, modo } : undefined)
+    if (opt.json) { out(r); break }
+    print(`Modo revisión: ${r.modo ? 'sí (los cambios de la IA llegan como propuestas)' : 'no'} · ${r.propuestas.length} propuesta(s) · ${r.comentarios.filter((c) => c.estado === 'abierto').length} comentario(s) abiertos`)
+    break
+  }
+  case 'propuestas': {
+    const r = await call('GET', '/v1/revision' + qs({ path: file(0) }))
+    if (opt.json) { out(r.propuestas); break }
+    if (!r.propuestas.length) print('No hay propuestas pendientes.')
+    for (const pr of r.propuestas) {
+      print(`${pr.id}  ${pr.autor} · ${pr.resumen}`)
+      for (const t of pr.trozos) {
+        print(`  línea ${t.ahora ?? '¿?'}${t.ahora ? '' : ' (ya no encaja)'}`)
+        for (const l of t.antes) print(`  - ${l}`)
+        for (const l of t.despues) print(`  + ${l}`)
+      }
+    }
+    break
+  }
+  case 'aceptar':
+  case 'rechazar': {
+    const path = file(0)
+    const id = opt.todas ? 'todas' : args[1]
+    if (!id) die(`Uso: buho-docs ${cmd} <archivo.md> <id-propuesta|todas>`)
+    const r = await call('POST', '/v1/' + cmd, { path, id, todas: id === 'todas' })
+    if (opt.json) { out(r); break }
+    print(cmd === 'rechazar' ? `${r.rechazadas} propuesta(s) rechazada(s)` : `${r.aceptadas} propuesta(s) aceptada(s)${r.fallidos ? ` · ${r.message}` : ''}`)
+    break
+  }
+  case 'comentarios': {
+    const r = await call('GET', '/v1/comentarios' + qs({ path: file(0), abiertos: opt.abiertos ? 'true' : undefined }))
+    if (opt.json) { out(r.comentarios); break }
+    if (!r.comentarios.length) print(opt.abiertos ? 'No hay comentarios abiertos.' : 'No hay comentarios.')
+    for (const c of r.comentarios) {
+      print(`${c.id}  [${c.estado}] ${c.autor}: ${c.texto}`)
+      print(`  sobre «${c.cita.slice(0, 90)}» · línea ${c.ahora ?? '¿?'}${c.bloque ? ` · bloque #${c.bloque.id} (${c.bloque.seccion})` : ''}`)
+      for (const re of c.respuestas) print(`  ↳ ${re.autor}: ${re.texto}`)
+    }
+    break
+  }
+  case 'comentar': {
+    const path = file(0)
+    const texto = args[1] ?? (typeof opt.text === 'string' ? opt.text : undefined)
+    if (!texto) die('Uso: buho-docs comentar <archivo.md> "comentario" (--cita "texto" | --bloque #b… | --linea N)')
+    const r = await call('POST', '/v1/comentar', { path, texto, cita: opt.cita, bloque: opt.bloque, linea: opt.linea, author: author() })
+    opt.json ? out(r) : print(`Comentario ${r.id} en la línea ${r.ahora}`)
+    break
+  }
+  case 'responder': {
+    const path = file(0)
+    if (!args[1]) die('Uso: buho-docs responder <archivo.md> <id-comentario> "respuesta" [--resolver]')
+    const r = await call('POST', '/v1/responder', { path, id: args[1], texto: args[2] ?? opt.text, resolver: !!opt.resolver, author: author() })
+    opt.json ? out(r) : print(`Comentario ${r.id}: ${r.estado}`)
+    break
+  }
+  case 'resolver': {
+    const path = file(0)
+    if (!args[1]) die('Uso: buho-docs resolver <archivo.md> <id-comentario>')
+    const r = await call('POST', '/v1/resolver', { path, id: args[1], author: author() })
+    opt.json ? out(r) : print('Resuelto')
+    break
+  }
+  case 'atender': {
+    // Un agente por cada bloque con comentarios abiertos, todos a la vez. Cada uno deja una propuesta
+    // (o, con --directo, escribe el cambio). Los comentarios con propuesta pendiente no se repiten.
+    const path = file(0)
+    const modelo = typeof opt.modelo === 'string' ? opt.modelo : 'sonnet'
+    const paralelo = Number(opt.paralelo) || 8
+    const quien = author() ?? 'Claude'
+    const rv = await call('GET', '/v1/revision' + qs({ path }))
+    const ocupados = new Set(rv.propuestas.flatMap((pr) => String(pr.comentario ?? '').split(',')))
+    const abiertos = rv.comentarios.filter((c) => c.estado === 'abierto' && !ocupados.has(c.id))
+    if (!abiertos.length) { print('No hay comentarios abiertos sin atender.'); break }
+    const grupos = new Map()
+    for (const c of abiertos) {
+      if (!c.bloque) { io.err(`  ✗ ${c.id}: no encuentro «${c.cita.slice(0, 50)}» en el documento\n`); continue }
+      if (!grupos.has(c.bloque.id)) grupos.set(c.bloque.id, { bloque: c.bloque, cs: [] })
+      grupos.get(c.bloque.id).cs.push(c)
+    }
+    const doc = await call('GET', '/v1/read' + qs({ path }))
+    const t0 = Date.now()
+    io.err(`Atendiendo ${abiertos.length} comentario(s) en ${grupos.size} bloque(s), en paralelo…\n`)
+    const fallos = []
+    let hechas = 0
+    const uno = async ({ bloque, cs }) => {
+      const t = Date.now()
+      const pedir = [
+        `Estás revisando un documento de Búho Docs titulado «${doc.title}» (${doc.kind}). El usuario ha dejado comentarios sobre un bloque. Aplica lo que pide.`,
+        `Sección: ${bloque.seccion || '(principio)'}`,
+        'Bloque actual (Markdown de Búho Docs: ::: caja / tarjetas / cifras / pasos / columnas … :::, {icon=…}, \\pagebreak):',
+        '<<<',
+        bloque.markdown,
+        '>>>',
+        'Comentarios del usuario:',
+        ...cs.map((c) => `- Sobre «${(c.seleccion || c.cita).trim().slice(0, 300)}»: ${c.texto}`),
+        '',
+        'Devuelve SOLO el Markdown que sustituye a ese bloque entero (puede ser más de un bloque si hay que añadir algo; conserva lo que no se pide cambiar, el estilo y el idioma: español de España). Si hay que quitar el bloque entero, devuelve solo la palabra ELIMINAR. Sin explicaciones ni bloques de código alrededor. No inventes cifras.'
+      ].join('\n')
+      const outp = await new Promise((ok) => {
+        const child = spawn('claude', ['-p', '--model', modelo, '--output-format', 'json'], { shell: process.platform === 'win32', stdio: ['pipe', 'pipe', 'pipe'] })
+        let o = ''
+        child.stdout.on('data', (d) => (o += d))
+        child.on('error', (e) => ok(JSON.stringify({ is_error: true, result: String(e) })))
+        child.on('close', () => ok(o))
+        child.stdin.end(pedir)
+      })
+      let res
+      try { res = JSON.parse(outp) } catch { res = { is_error: true, result: String(outp).slice(0, 160) || 'sin respuesta' } }
+      if (res.is_error) {
+        fallos.push(`#${bloque.id}: ${res.result}`)
+        io.err(`  ✗ #${bloque.id} · ${String(res.result).slice(0, 120)}\n`)
+        return
+      }
+      let txt = String(res.result ?? '').trim().replace(/^```(?:markdown|md)?\s*\n([\s\S]*?)\n```$/, '$1')
+      const borrar = /^ELIMINAR\.?$/.test(txt)
+      const resumen = cs.length === 1 ? `Comentario: «${cs[0].texto.slice(0, 60)}»` : `${cs.length} comentarios en un bloque`
+      const r = await call('POST', '/v1/bloque', { path, id: bloque.id, mode: borrar ? 'delete' : 'replace', content: borrar ? undefined : txt, author: quien, summary: resumen, comentario: cs.map((c) => c.id).join(','), proponer: !opt.directo })
+      for (const c of cs) await call('POST', '/v1/responder', { path, id: c.id, author: quien, texto: opt.directo ? 'Hecho.' : `Propuesta ${r.propuesta ?? ''} lista para revisar.`, resolver: !!opt.directo })
+      hechas++
+      io.err(`  ✓ #${bloque.id} · ${cs.length} comentario(s) · ${((Date.now() - t) / 1000).toFixed(1)} s\n`)
+    }
+    const cola = [...grupos.values()]
+    await Promise.all(Array.from({ length: Math.min(paralelo, cola.length) }, async () => {
+      while (cola.length) await uno(cola.shift())
+    }))
+    const total = ((Date.now() - t0) / 1000).toFixed(1)
+    if (opt.json) out({ ok: !fallos.length, bloques: grupos.size, hechas, fallos, segundos: Number(total) })
+    else print(`${hechas} de ${grupos.size} bloque(s) atendidos en ${total} s${opt.directo ? '' : ': revisa las propuestas en la app o con buho-docs propuestas'}`)
+    if (fallos.length) {
+      if (/auth|login|OAuth/i.test(fallos.join(' '))) io.err('Parece que la sesión de claude ha caducado: abre una terminal, ejecuta «claude» e inicia sesión.\n')
       exitWith(1)
     }
     break

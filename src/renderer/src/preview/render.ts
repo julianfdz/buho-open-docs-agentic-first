@@ -1,5 +1,6 @@
 import type MarkdownIt from 'markdown-it'
 import { newBuhoMd, parseAttrs } from '@shared/mdcore'
+import { svgGrafico } from '@shared/grafico'
 import { kindOf, metaGet, splitFront, splitSlides, type Slide } from '@shared/doc'
 import type { DocKind, RenderWarning } from '@shared/types'
 import { CONTAINERS, LAYOUTS, LAYOUT_ALIAS } from '@shared/syntax'
@@ -77,6 +78,19 @@ export function fileUrl(src: string, baseDir: string): string {
 // ─── markdown-it ───────────────────────────────────────────────────────────────────────────────
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
+/** ¿El token i está dentro de una columna (+++)? Entonces el gráfico se dibuja estrecho. */
+function enColumna(tokens: any[], i: number): boolean {
+  let depth = 0
+  for (let k = i - 1; k >= 0; k--) {
+    if (tokens[k].type === 'col_close') depth++
+    else if (tokens[k].type === 'col_open') {
+      if (depth === 0) return true
+      depth--
+    }
+  }
+  return false
+}
+
 function makeMd(): MarkdownIt {
   // Lectura (bloques ::: , \pagebreak, atributos {…}, líneas) compartida con la exportación a Word.
   const md = newBuhoMd()
@@ -91,6 +105,11 @@ function makeMd(): MarkdownIt {
       const texto = a.kv.texto ?? a.kv.text ?? 'Contenido en preparación'
       return `<div class="bx bx-hueco" data-line="${t.attrGet('data-line') ?? ''}" data-end="${t.attrGet('data-end') ?? ''}" data-hueco="${escHtml(id)}"><div class="hueco-spin"></div><div><b>${escHtml(texto)}</b><span>Generándose… se rellenará solo (${escHtml(id || 'sin id')})</span></div><div class="bx-body">\n`
     }
+    if (t.info === 'grafico') {
+      const g = (t.meta as { grafico?: import('@shared/grafico').DatosGrafico }).grafico
+      if (!g) env.warnings.push({ line: t.map[0] + 1 + env.lineOffset, level: 'aviso', message: 'Gráfico sin datos: dentro va una tabla (primera columna = categorías, las demás = números)' })
+      return `<figure class="bx bx-grafico" data-line="${t.attrGet('data-line') ?? ''}" data-end="${t.attrGet('data-end') ?? ''}">${g ? svgGrafico(g, enColumna(tokens, i) ? 380 : 640) : ''}<div class="bx-body">\n`
+    }
     if (t.info === 'indice') {
       const niveles = Number(a.kv.niveles ?? a.classes.find((c) => /^is-\d$/.test(c))?.slice(3)) || 2
       return `<div class="bx bx-indice" data-line="${t.attrGet('data-line') ?? ''}" data-end="${t.attrGet('data-end') ?? ''}" data-niveles="${niveles}" data-titulo="${escHtml(a.kv.titulo ?? 'Índice')}"><div class="bx-body">\n`
@@ -101,7 +120,15 @@ function makeMd(): MarkdownIt {
     const style = a.kv.cols || a.kv.columnas ? ` style="--cols:${Number(a.kv.cols || a.kv.columnas) || 2}"` : ''
     return `<div class="${cls.join(' ')}" data-line="${t.attrGet('data-line') ?? ''}"${a.id ? ` id="${a.id}"` : ''}${style}>${icon ? `<span class="ic bx-ic">${icon}</span>` : ''}<div class="bx-body">\n`
   }
-  md.renderer.rules.contenedor_close = () => '</div></div>\n'
+  md.renderer.rules.contenedor_close = (tokens: any[], i: number) => {
+    // El cierre del gráfico es </figure>: se busca su apertura.
+    let depth = 0
+    for (let k = i; k >= 0; k--) {
+      depth += tokens[k].nesting
+      if (depth === 0) return tokens[k].info === 'grafico' ? '</div></figure>\n' : '</div></div>\n'
+    }
+    return '</div></div>\n'
+  }
 
   md.renderer.rules.heading_open = (tokens: any[], i: number, opts: any, env: Env, self: any) => {
     const t = tokens[i]

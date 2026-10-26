@@ -1142,3 +1142,22 @@ tr,
 .deck .s-main > ol > li {
   margin: 0.4em 0;
 }
+
+/* Gráficos desde tablas */
+.bx-grafico {
+  margin: 4mm 0 5mm;
+  break-inside: avoid;
+}
+.grafico-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+.bx-grafico > .bx-body:empty {
+  display: none;
+}
+.bx-grafico > .bx-body {
+  font-size: 0.85em;
+  color: #5d6b7c;
+}

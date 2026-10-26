@@ -1,4 +1,5 @@
 import MarkdownIt from 'markdown-it'
+import { datosDeTabla, tipoGrafico } from './grafico'
 
 /**
  * Lectura del Markdown de Búho Docs (lo que no depende de cómo se pinta): bloques `::: nombre` con
@@ -109,6 +110,46 @@ export function newBuhoMd(): MarkdownIt {
       if (a.kv.icon) open.meta = { ...(open.meta ?? {}), icon: a.kv.icon }
       const w = a.kv.width ?? a.kv.ancho
       if (w) open.attrSet('style', `--img-w:${/^\d+$/.test(w) ? w + '%' : w}`)
+    }
+  })
+
+  // ::: grafico …: la tabla de dentro pasa a ser los datos del gráfico (meta.grafico) y deja de pintarse.
+  md.core.ruler.push('graficos', (state: any) => {
+    const toks = state.tokens
+    for (let i = 0; i < toks.length; i++) {
+      const open = toks[i]
+      if (open.type !== 'contenedor_open' || open.info !== 'grafico') continue
+      let depth = 0
+      let close = i
+      for (let k = i; k < toks.length; k++) {
+        depth += toks[k].nesting
+        if (depth === 0) {
+          close = k
+          break
+        }
+      }
+      const ti = toks.findIndex((t: any, k: number) => k > i && k < close && t.type === 'table_open')
+      if (ti < 0) continue
+      const te = toks.findIndex((t: any, k: number) => k > ti && t.type === 'table_close')
+      const filas: string[][] = []
+      let cab: string[] = []
+      let fila: string[] | null = null
+      for (let k = ti; k <= te; k++) {
+        const t = toks[k]
+        if (t.type === 'tr_open') fila = []
+        else if ((t.type === 'th_open' || t.type === 'td_open') && fila) fila.push(toks[k + 1]?.content ?? '')
+        else if (t.type === 'tr_close' && fila) {
+          if (!cab.length) cab = fila
+          else filas.push(fila)
+          fila = null
+        }
+      }
+      const a = open.meta ?? { classes: [], kv: {} }
+      const tipo = tipoGrafico(a.kv.tipo ?? a.classes?.map((c: string) => c.replace(/^is-/, '')).find((c: string) => tipoGrafico(c) !== 'columnas' || c === 'columnas'))
+      const datos = datosDeTabla(cab, filas, tipo, a.kv.titulo ?? a.kv.title, a.kv.unidad)
+      if (!datos) continue
+      open.meta = { ...a, grafico: datos }
+      toks.splice(ti, te - ti + 1)
     }
   })
 

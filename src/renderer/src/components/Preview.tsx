@@ -15,6 +15,7 @@ export type VisualMsg =
   | { type: 'redo' }
   | { type: 'key'; key: string; shift: boolean }
   | { type: 'caret'; line: number }
+  | { type: 'comentar'; line: number; cita: string; seleccion?: string }
 
 interface Props {
   source: string
@@ -30,6 +31,10 @@ interface Props {
   cmd: { name: string; value?: string; nonce: number } | null
   /** Tema del documento, ya resuelto (los propios traen logo y CSS). */
   tema: import('@shared/temas').Tema | null
+  /** Revisión: líneas con comentarios y con propuestas (se marcan en la página). */
+  marcas: { comentarios: number[]; propuestas: number[] } | null
+  /** Modo comentar: clic en la página = comentario. */
+  comentando: boolean
   onRendered(r: RenderResult): void
   onPick(m: { line: number; word: string; double: boolean }): void
   onVisual(m: VisualMsg): void
@@ -51,7 +56,7 @@ export default function Preview(p: Props): React.JSX.Element {
       if (m?.type === 'ready') setReady(true)
       else if (m?.type === 'rendered' && m.id === seq.current) props.current.onRendered(m.result)
       else if (m?.type === 'click') props.current.onPick(m)
-      else if (['edit', 'split', 'merge', 'focus', 'undo', 'redo', 'key', 'caret'].includes(m?.type)) props.current.onVisual(m)
+      else if (['edit', 'split', 'merge', 'focus', 'undo', 'redo', 'key', 'caret', 'comentar'].includes(m?.type)) props.current.onVisual(m)
     }
     addEventListener('message', onMsg)
     return () => removeEventListener('message', onMsg)
@@ -65,7 +70,7 @@ export default function Preview(p: Props): React.JSX.Element {
       lastFlash.current = p.flash?.nonce ?? null
       lastFocus.current = p.focus?.nonce ?? null
       frame.current?.contentWindow?.postMessage(
-        { type: 'render', id: ++seq.current, source: p.source, baseDir: p.baseDir, flash: flash?.lines ?? [], reveal: flash?.reveal ?? false, editable: p.editable, focus: focus ? { line: focus.line, offset: focus.offset } : undefined, tema: p.tema ?? undefined },
+        { type: 'render', id: ++seq.current, source: p.source, baseDir: p.baseDir, flash: flash?.lines ?? [], reveal: flash?.reveal ?? false, editable: p.editable, focus: focus ? { line: focus.line, offset: focus.offset } : undefined, tema: p.tema ?? undefined, marcas: p.marcas ?? undefined },
         '*'
       )
     }
@@ -75,7 +80,11 @@ export default function Preview(p: Props): React.JSX.Element {
     }
     const t = setTimeout(send, 200)
     return () => clearTimeout(t)
-  }, [ready, p.source, p.baseDir, p.flash?.nonce, p.focus?.nonce, p.editable, p.tema])
+  }, [ready, p.source, p.baseDir, p.flash?.nonce, p.focus?.nonce, p.editable, p.tema, JSON.stringify(p.marcas)])
+
+  useEffect(() => {
+    if (ready) frame.current?.contentWindow?.postMessage({ type: 'comentar', on: p.comentando }, '*')
+  }, [ready, p.comentando])
 
   useEffect(() => {
     if (ready && p.follow) frame.current?.contentWindow?.postMessage({ type: 'scrollTo', line: p.follow, quiet: true }, '*')

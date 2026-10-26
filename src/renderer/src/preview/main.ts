@@ -29,6 +29,25 @@ interface RenderRequest {
   focus?: { line: number; offset: number }
   /** Tema ya resuelto por la app (los del usuario llevan logo y CSS). */
   tema?: Tema
+  /** Revisión: líneas (1) con comentarios abiertos y con propuestas pendientes. */
+  marcas?: { comentarios: number[]; propuestas: number[] }
+}
+
+let comentando = false
+/** Marca los bloques (y sus trozos si se partieron entre páginas) que tienen comentarios o propuestas. */
+function marcar(container: HTMLElement, m: RenderRequest['marcas']): void {
+  if (!m) return
+  const list = blocks(container)
+  const poner = (lines: number[], cls: string): void => {
+    for (const l of lines) {
+      const el = blockAt(list, l)
+      if (!el) continue
+      const parts = el.dataset.line ? [...container.querySelectorAll<HTMLElement>(`${el.tagName.toLowerCase()}[data-line="${el.dataset.line}"]`)] : [el]
+      for (const p of parts) p.classList.add(cls)
+    }
+  }
+  poner(m.comentarios, 'm-com')
+  poner(m.propuestas, 'm-prop')
 }
 
 declare global {
@@ -310,6 +329,7 @@ async function renderNow(req: RenderRequest): Promise<RenderResult> {
   warnings.push(...brokenImages(next))
   if (!req.reveal) scrollTo(0, scroll)
   flash(next, req.flash ?? [], !!req.reveal)
+  marcar(next, req.marcas)
   return { kind: b.kind, pages, warnings, ms: Math.round(performance.now() - t0), timings: { markdown: Math.round(tBuild - t0), maquetar: Math.round(tLayout - tBuild), resto: Math.round(performance.now() - tLayout) } }
 }
 
@@ -341,6 +361,9 @@ if (!printMode) {
       }
     } else if (m?.type === 'cmd') {
       runCommand(m.name, m.value)
+    } else if (m?.type === 'comentar') {
+      comentando = !!m.on
+      document.body.classList.toggle('comentando', comentando)
     } else if (m?.type === 'flushEdit') {
       flushEdit()
     } else if (m?.type === 'scrollTo' && current) {
@@ -358,10 +381,25 @@ if (!printMode) {
     }
   })
   installEditing()
+  // Comentando: clic en un bloque (o seleccionar un trozo) → comentario sobre eso.
+  addEventListener(
+    'mouseup',
+    (e: MouseEvent) => {
+      if (!comentando || e.button !== 0) return
+      const el = (e.target as HTMLElement).closest<HTMLElement>('[data-line]')
+      if (!el) return
+      const sel = (getSelection()?.toString() ?? '').replace(/\s+/g, ' ').trim()
+      document.querySelectorAll('.m-sel').forEach((x) => x.classList.remove('m-sel'))
+      el.classList.add('m-sel')
+      parent.postMessage({ type: 'comentar', line: Number(el.dataset.line), cita: sel.slice(0, 400), seleccion: sel ? sel.slice(0, 400) : undefined }, '*')
+    },
+    true
+  )
   // Clic en la vista → la app lleva el editor a esa línea (y a la palabra, para corregir erratas).
   addEventListener('click', (e: MouseEvent) => {
     const a = (e.target as HTMLElement).closest('a')
     if (a) e.preventDefault()
+    if (comentando) return
     // Índice: clic en una entrada → ir a ese título.
     const ix = (e.target as HTMLElement).closest<HTMLElement>('.ix-item')
     if (ix && current) {

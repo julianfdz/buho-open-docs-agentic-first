@@ -41,6 +41,7 @@ async function until(fn, ms = 8000) {
   return false
 }
 
+writeFileSync(join(out, 'grafico.md'), ['::: grafico columnas titulo="Ventas"', '| Mes | Ventas |', '|---|---|', '| Ene | 10 |', '| Feb | 14 |', ':::', ''].join('\n'))
 const app = await electron.launch({ args: [root], env, timeout: 30000 })
 try {
   const page = await app.firstWindow()
@@ -337,6 +338,32 @@ try {
   const destino = join(out, 'docs', 'guardados', 'Acta e2e.md')
   const gd = await cliJson('guardar', nb.path, destino)
   check(gd.path === destino && text(destino).includes('Punto añadido por la IA.') && !existsSync(dirname(nb.path)), 'guardar copia el borrador y borra su carpeta temporal')
+
+  // Revisión: un cambio con --proponer no se escribe hasta aceptarlo; comentarios anclados a su bloque.
+  await cli('open', doc)
+  const antesProp = text(doc)
+  const pr = await cliJson('replace', doc, 'Por dónde empezar', 'Cómo empezar', '--proponer', '--author', 'Claude')
+  check(pr.propuesta && text(doc) === antesProp, 'replace --proponer deja una propuesta sin tocar el archivo')
+  check(await until(async () => (await frame.locator('.m-prop').count()) > 0), 'La vista marca lo que la IA propone cambiar')
+  const ac = await cliJson('aceptar', doc, pr.propuesta)
+  check(ac.aceptadas === 1 && text(doc).includes('## Cómo empezar'), 'aceptar aplica la propuesta')
+  const cm = await cliJson('comentar', doc, 'Hazlo más corto', '--cita', 'Cómo empezar')
+  const cs = await cliJson('comentarios', doc, '--abiertos')
+  check(cs.length === 1 && cs[0].id === cm.id && cs[0].bloque?.id, `comentar ancla el comentario a su bloque (#${cs[0]?.bloque?.id})`)
+  await cli('resolver', doc, cm.id)
+  await cli('replace', doc, '## Cómo empezar', '## Por dónde empezar', '--author', 'Claude')
+  check((await cliJson('comentarios', doc, '--abiertos')).length === 0, 'resolver cierra el comentario')
+
+  // Gráfico desde una tabla: SVG en la vista y gráfico nativo en Word.
+  await cli('append', doc, '--file', join(out, 'grafico.md'), '--author', 'Claude')
+  check(await until(async () => (await frame.locator('svg.grafico-svg').count()) > 0), 'Un ::: grafico se dibuja en la vista')
+  const wg = await cliJson('export', doc, '--word', '--out', join(out, 'grafico.docx'))
+  check(readFileSync(wg.file).includes('word/charts/'), 'Word lleva el gráfico como gráfico nativo')
+
+  // PowerPoint de la presentación.
+  const pp = await cliJson('export', deck, '--pptx', '--out', join(out, 'presentacion.pptx'))
+  const pz = readFileSync(pp.file)
+  check(pz.subarray(0, 2).toString() === 'PK' && pz.includes('ppt/slides/slide7.xml') && pp.slides === 7, `export --pptx: ${pp.slides} diapositivas (${(pp.bytes / 1024).toFixed(0)} KB)`)
 
   // Clic en la vista → el editor va a esa línea.
   await cli('open', doc)

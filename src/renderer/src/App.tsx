@@ -9,6 +9,8 @@ import {
   FileText,
   FolderOpen,
   History,
+  CloudUpload,
+  MessagesSquare,
   Moon,
   PanelLeft,
   PanelRight,
@@ -26,6 +28,7 @@ import FormatBar from './components/FormatBar'
 import TemaDialog from './components/TemaDialog'
 import { temaDe, type Tema } from '@shared/temas'
 import HistoryPanel from './components/HistoryPanel'
+import RevisionPanel, { type RevEstado } from './components/RevisionPanel'
 import logo from './brand/buho.png'
 
 /** Búho Docs: pestañas de documentos, editor + vista previa, cambios de la IA en directo, historial. */
@@ -40,7 +43,7 @@ interface Tab {
   saved: string
 }
 
-type Panel = 'history' | 'warnings' | 'agents' | null
+type Panel = 'history' | 'warnings' | 'agents' | 'revision' | null
 
 const dirOf = (p: string): string => p.replace(/[\\/][^\\/]*$/, '')
 let nonce = 0
@@ -57,6 +60,16 @@ export default function App(): React.JSX.Element {
   const [follow, setFollow] = useState<number | null>(null)
   const [panel, setPanel] = useState<Panel>(null)
   const [histRefresh, setHistRefresh] = useState(0)
+  // Revisión: comentarios y propuestas del documento activo; modo «comentar» en la página.
+  const [rev, setRev] = useState<RevEstado | null>(null)
+  const [driveDir, setDriveDir] = useState<string | null>(null)
+  useEffect(() => {
+    void window.buho.drive().then(setDriveDir)
+  }, [])
+  const [revTick, setRevTick] = useState(0)
+  const [comentando, setComentando] = useState(false)
+  const [revDraft, setRevDraft] = useState<{ line: number; cita: string; seleccion?: string; nonce: number } | null>(null)
+  const [enviando, setEnviando] = useState<string | null>(null)
   const [toast, setToast] = useState<{ msg: string; ai?: boolean; action?: { label: string; run: () => void } } | null>(null)
   const [conflict, setConflict] = useState<DocChange | null>(null)
   const [saving, setSaving] = useState(false)
@@ -84,6 +97,33 @@ export default function App(): React.JSX.Element {
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const tab = tabs.find((t) => t.path === active) ?? null
+
+  // Revisión del documento activo (se recarga si cambia el documento, sus propuestas o comentarios).
+  useEffect(() => {
+    if (!tab?.path) return setRev(null)
+    let vivo = true
+    void window.buho.revision('revision', { path: tab.path }).then((r) => vivo && !r?.error && setRev(r))
+    return () => {
+      vivo = false
+    }
+  }, [tab?.path, revTick, histRefresh])
+  useEffect(() => {
+    if (panel !== 'revision') setComentando(false)
+  }, [panel])
+  const revMarcas = rev
+    ? { comentarios: rev.comentarios.filter((c) => c.estado === 'abierto' && c.ahora).map((c) => c.ahora!), propuestas: rev.propuestas.flatMap((x) => x.trozos.map((t) => t.ahora).filter((l): l is number => !!l)) }
+    : null
+  const isDeck = !!tab && kindOf(splitFront(tab.content).meta) === 'presentacion'
+  const revPendientes = (rev?.propuestas.length ?? 0) + (rev?.comentarios.filter((c) => c.estado === 'abierto').length ?? 0)
+  const enviarIA = async (path: string): Promise<void> => {
+    setEnviando(path)
+    setComentando(false)
+    say('La IA está atendiendo tus comentarios, un agente por cada parte…', { ms: 4000 })
+    const r = await window.buho.atender(path)
+    setEnviando(null)
+    const ultima = r.salida.split('\n').filter(Boolean).pop() ?? ''
+    say(r.ok ? 'Listo: revisa las propuestas y acéptalas o recházalas' : `Algo falló: ${ultima}`, { ms: 8000 })
+  }
 
   const say = useCallback((msg: string, opts: { ai?: boolean; action?: { label: string; run: () => void }; ms?: number } = {}) => {
     setToast({ msg, ai: opts.ai, action: opts.action })
@@ -179,6 +219,10 @@ export default function App(): React.JSX.Element {
       const tb = tabsRef.current.find((x) => x.path === activeRef.current)
       if (!tb) return
       switch (m.type) {
+        case 'comentar':
+          setPanel('revision')
+          setRevDraft({ line: m.line, cita: m.cita, seleccion: m.seleccion, nonce: ++nonce })
+          return
         case 'edit':
           // Un cambio de formato es un paso propio de «deshacer»; lo que se teclea seguido, uno solo.
           commitVisual(replaceBlock(tb.content, m.ref, m.text), m.format ? '' : `e${m.ref.meta ?? m.ref.line}:${m.ref.cell ?? ''}`)
@@ -281,6 +325,7 @@ export default function App(): React.JSX.Element {
     const offs = [
       window.buho.onOpen((d) => addTab(d)),
       window.buho.onDocChange((c) => applyChange(c)),
+      window.buho.onRevision(() => setRevTick((n) => n + 1)),
       window.buho.onShow((m) => {
         setActive(m.path)
         if (m.line) setJump({ line: m.line, nonce: ++nonce })
@@ -410,7 +455,7 @@ export default function App(): React.JSX.Element {
     } else if (r.error) say(`No se pudo exportar: ${r.error}`, { ms: 8000 })
   }
 
-  const doWord = async (choose = false): Promise<void> => {
+  const doWord = async (choose: boolean | 'drive' = false): Promise<void> => {
     if (!tab) return
     await saveNow(tab.path, true)
     setExporting(true)
@@ -418,8 +463,10 @@ export default function App(): React.JSX.Element {
     setExporting(false)
     if (r.ok && r.file) {
       const file = r.file
-      say(`Word listo · ${file.split(/[\\/]/).pop()}`, { action: { label: 'Abrir', run: () => void window.buho.openExternal(file) }, ms: 8000 })
-    } else if (r.error) say(`No se pudo exportar a Word: ${r.error}`, { ms: 8000 })
+      const que = file.endsWith('.pptx') ? 'PowerPoint' : 'Word'
+      if (choose === 'drive') say(`En Google Drive · ${file.split(/[\\/]/).pop()} (se sube solo)`, { action: { label: 'Abrir Drive', run: () => void window.buho.openExternal('https://drive.google.com/drive/recent') }, ms: 9000 })
+      else say(`${que} listo · ${file.split(/[\\/]/).pop()}`, { action: { label: 'Abrir', run: () => void window.buho.openExternal(file) }, ms: 8000 })
+    } else if (r.error) say(`No se pudo exportar: ${r.error}`, { ms: 8000 })
   }
 
   useEffect(() => {
@@ -498,12 +545,21 @@ export default function App(): React.JSX.Element {
                   <PanelRight size={15} />
                 </button>
               </div>
+              <button className={`icon badge-wrap ${panel === 'revision' ? 'on' : ''}`} title="Revisión: comenta la página y la IA te propone los cambios" onClick={() => setPanel(panel === 'revision' ? null : 'revision')}>
+                <MessagesSquare size={16} />
+                {revPendientes > 0 && <span className="badge">{revPendientes}</span>}
+              </button>
               <button className={`icon ${panel === 'history' ? 'on' : ''}`} title="Historial (Ctrl+Shift+H)" onClick={() => setPanel(panel === 'history' ? null : 'history')}>
                 <History size={16} />
               </button>
-              <button className="btn" onClick={() => void doWord()} disabled={exporting} title="Exportar a Word (.docx), editable. Clic derecho: elegir dónde" onContextMenu={() => void doWord(true)}>
-                <FileText size={15} /> Word
+              <button className="btn" onClick={() => void doWord()} disabled={exporting} title={`Exportar a ${isDeck ? 'PowerPoint (.pptx)' : 'Word (.docx)'}, editable. Clic derecho: elegir dónde`} onContextMenu={() => void doWord(true)}>
+                {isDeck ? <Presentation size={15} /> : <FileText size={15} />} {isDeck ? 'PowerPoint' : 'Word'}
               </button>
+              {driveDir && (
+                <button className="icon" onClick={() => void doWord('drive')} disabled={exporting} title={`Guardar en Google Drive (${driveDir}) como ${isDeck ? 'PowerPoint' : 'Word'}: se sube solo y se abre con Google ${isDeck ? 'Presentaciones' : 'Documentos'}`}>
+                  <CloudUpload size={16} />
+                </button>
+              )}
               <button className="btn primary" onClick={() => void doExport()} disabled={exporting} title="Exportar a PDF junto al documento (Ctrl+P). Clic derecho: elegir dónde" onContextMenu={() => void doExport(true)}>
                 <FileDown size={15} /> {exporting ? 'Exportando…' : 'PDF'}
               </button>
@@ -609,10 +665,12 @@ export default function App(): React.JSX.Element {
                   baseDir={dirOf(tab.path)}
                   flash={pvFlash}
                   follow={view === 'split' ? follow : null}
-                  editable
+                  editable={!comentando}
                   focus={pvFocus}
                   cmd={pvCmd}
                   tema={temaPkg}
+                  marcas={revMarcas}
+                  comentando={comentando}
                   onVisual={onVisual}
                   onRendered={setRender}
                   onPick={(m) => {
@@ -623,6 +681,23 @@ export default function App(): React.JSX.Element {
               </section>
             )}
           </>
+        )}
+        {panel === 'revision' && tab && (
+          <RevisionPanel
+            path={tab.path}
+            estado={rev}
+            draft={revDraft}
+            comentando={comentando}
+            enviando={enviando === tab.path}
+            onComentando={setComentando}
+            onEnviar={() => void enviarIA(tab.path)}
+            onClose={() => {
+              setPanel(null)
+              setComentando(false)
+            }}
+            onJump={(line) => setJump({ line, nonce: ++nonce })}
+            toast={say}
+          />
         )}
         {panel === 'history' && tab && <HistoryPanel path={tab.path} refresh={histRefresh} onClose={() => setPanel(null)} onJump={(line) => setJump({ line, nonce: ++nonce })} toast={say} />}
         {panel === 'warnings' && render && (

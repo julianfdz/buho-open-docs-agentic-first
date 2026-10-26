@@ -30,7 +30,9 @@ Búho Docs (de Buho Corps Systems) hace **documentos A4** y **presentaciones 16:
 
 **Importar algo que ya existe (Word, PDF, HTML, texto):** `buho-docs importar archivo.docx [--salida doc.md] [--tema id]`. Word sale bien al momento (títulos, listas, tablas, negritas, imágenes). Los PDF se maquetan con IA en paralelo (sus tablas no se recuperan con reglas); `--rapido` solo convierte. Por defecto se guarda en Documentos\Buho Docs: el original no se toca.
 
-**Exportar a Word:** `buho-docs export doc.md --word` (o `--out x.docx`): .docx editable con estilos de título reales, listas, tablas, cajas, tarjetas, cifras, índice, portada, cabecera y pie. Para quien tenga que retocarlo en Word, LibreOffice o Google Docs; lo que se envía tal cual sigue siendo el PDF.
+**Exportar a Office y a Google:** `buho-docs export doc.md --word` (.docx con estilos de título reales, listas, tablas, cajas, tarjetas, cifras, índice, portada, cabecera y pie) y `buho-docs export deck.md --pptx` (PowerPoint con cada diapositiva en su diseño, formas, tablas, notas del orador). Los `::: grafico` van como gráficos nativos, editables. `--drive` lo deja en Google Drive para escritorio (se sube solo; en drive.google.com se abre con Documentos o Presentaciones de Google). Lo que se envía tal cual sigue siendo el PDF.
+
+**Revisión (cuando el usuario quiere aprobar los cambios):** añade `--proponer` a cualquier cambio (section, replace, editar, batch…) y queda como propuesta que el usuario acepta o rechaza en el panel Revisión de la app, sin tocar el archivo. Con `buho-docs revision doc.md si` todo cambio de un agente llega así. El usuario también deja comentarios en la página («quita esto», «mete algo así»): léelos con `buho-docs comentarios doc.md --abiertos` (cada uno trae su bloque `#id` y su Markdown), haz el cambio (mejor con `--proponer --comentario <id>`) y `buho-docs responder doc.md <id> "Hecho: …" --resolver`. O todos de golpe: `buho-docs atender doc.md` lanza un agente por bloque comentado, a la vez, y deja propuestas (`--directo` para escribirlas).
 
 **Borradores sin guardar:** `buho-docs nuevo [nombre] [--plantilla acta] [--tema id] [--file c.md]` crea un documento sin elegir dónde (imprime su ruta) y se abre en la app como «sin guardar»; se trabaja con él igual que con cualquier .md (append, section, export…) y cuando esté listo `buho-docs guardar <ruta-del-borrador> <destino.md>`. Si nadie lo guarda, sigue ahí al volver a abrir la app. Úsalo cuando el usuario no ha dicho dónde quiere el documento.
 
@@ -76,6 +78,15 @@ buho-docs write <doc.md> --file entero.md       # reescribir todo (solo si cambi
 buho-docs check <doc.md>                        # páginas/diapositivas y avisos
 buho-docs export <doc.md> [--out archivo.pdf]   # PDF (por defecto junto al .md)
 buho-docs export <doc.md> --word [--out x.docx]  # Word editable (.docx)
+buho-docs export <deck.md> --pptx               # PowerPoint editable (.pptx)
+buho-docs export <doc.md> --drive               # Word/PowerPoint en Google Drive
+buho-docs <cambio> … --proponer                 # propuesta en vez de escribir (el usuario acepta o rechaza)
+buho-docs revision <doc.md> [si|no]             # modo revisión: todo cambio de la IA llega como propuesta
+buho-docs propuestas <doc.md> · aceptar|rechazar <doc.md> <id|todas>
+buho-docs comentarios <doc.md> [--abiertos]     # comentarios del usuario, con su bloque #id
+buho-docs comentar <doc.md> "texto" --cita "…"  # (o --bloque #b… / --linea N)
+buho-docs responder <doc.md> <id> "…" [--resolver]
+buho-docs atender <doc.md> [--directo]          # un agente por bloque comentado, en paralelo
 buho-docs nuevo [nombre] [--plantilla id] [--tema id] [--file c.md]  # borrador sin guardar → imprime su ruta
 buho-docs guardar <borrador.md> <destino.md>    # guardar un borrador
 buho-docs history <doc.md> | diff <doc.md> [id] | restore <doc.md> <id>
@@ -213,7 +224,15 @@ Introducción a la IA
 ::: indice niveles=2              # índice automático con números de página
 :::
 ::: cita                          # cita grande en Georgia
+
+::: grafico barras titulo="Horas ahorradas al mes"   # columnas (por defecto), barras, lineas, area, tarta, donut
+| Área | Horas |                    # 1.ª columna = categorías; las demás = series (números: 20 %, 1.234,5 €…)
+|---|---|
+| Ventas | 85 |
+:::
 ```
+
+**Gráficos:** con una tabla dentro de `::: grafico` se dibuja solo (colores accesibles, valores en las barras); `unidad=%` o `unidad=€` si no se deduce. En Word y PowerPoint sale como gráfico nativo con sus datos. Dentro de `::: columnas` se dibuja estrecho. Datos reales del usuario o con fuente, nunca inventados.
 
 **Iconos** `{icon=…}` en títulos y `icon=…` en cajas: cualquier nombre de [lucide.dev/icons](https://lucide.dev/icons) (`rocket`, `shield-check`…) o alias en español: cohete, escudo, reloj, bombilla, lupa, grafico, ventas, equipo, documento, ley, objetivo, engranaje, ajustes, chat, cerebro, red, megafono, calendario, carrito, dinero, finanzas, logistica, produccion, soporte, informatica, ia, rayo, alerta, ojo, bandera, libro, formacion, acuerdo, correo, telefono, web, seguridad, datos, nube, automatizar, robot, check, pregunta, euro, empresa, tienda, factura, contrato. `buho-docs check` avisa si uno no existe.
 

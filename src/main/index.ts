@@ -18,6 +18,9 @@ import { runInApp } from './clirun'
 import { importar } from './importar'
 import * as borradores from './borradores'
 import { exportDocx } from './exportar-word'
+import { exportPptx } from './exportar-pptx'
+import * as revision from './revision'
+import { aplicar, lineaActual, lineaCita } from '@shared/propuestas'
 import { crearTema, listarTemas, resolverTema, temasDir, type NuevoTema } from './temas'
 import { PLANTILLAS, desdePlantilla, plantillaById } from '@shared/plantillas'
 import { fechaHoy } from './templates'
@@ -55,6 +58,8 @@ function getSettings(): Settings {
 // ─── Puente con la ventana ─────────────────────────────────────────────────────────────────────
 
 const flushWaiters = new Map<string, () => void>()
+// La ventana se entera cuando cambian las propuestas o los comentarios de un documento.
+revision.onCambio((path) => win?.webContents.send('revision', { path }))
 docs.setBridge({
   send: (channel, payload) => win?.webContents.send(channel, payload),
   flush: (path) =>
@@ -99,17 +104,47 @@ const defaultOut = (path: string, ext: string): string => {
   return join(dir, basename(path, extname(path)) + ext)
 }
 const defaultPdf = (path: string): string => defaultOut(path, '.pdf')
-/** Exportar a Word (.docx): mismo contenido, editable en Word, LibreOffice o Google Docs. */
-async function exportWord(path: string, out: string): Promise<{ ok: true; file: string; bytes: number; kind: string }> {
+/** Google Drive para escritorio («Mi unidad» o «My Drive» en alguna unidad): lo que se guarda ahí se sube solo. */
+function carpetaDrive(): string | null {
+  for (const l of 'DEFGHIJKLMNOPQRSTUVWXYZ')
+    for (const n of ['Mi unidad', 'My Drive'])
+      if (existsSync(`${l}:\\${n}`)) return join(`${l}:\\${n}`, 'Buho Docs')
+  return null
+}
+/** Exportar a Office: Word (.docx) para documentos, PowerPoint (.pptx) para presentaciones. Editables. */
+async function exportWord(path: string, out: string): Promise<{ ok: true; file: string; bytes: number; kind: string; slides?: number }> {
   const src = await docs.current(path)
-  const { buffer } = await exportDocx(src, path, dirname(path))
+  const deck = /\.pptx$/i.test(out)
+  const r = deck ? await exportPptx(src, path, dirname(path)) : await exportDocx(src, path, dirname(path))
+  const buffer = r.buffer
+  mkdirSync(dirname(out), { recursive: true })
   try {
     writeFileSync(out, buffer)
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === 'EBUSY' || (e as NodeJS.ErrnoException).code === 'EPERM') throw new Error(`No puedo escribir ${out}: está abierto (ciérralo en Word o usa --out con otro nombre)`)
     throw e
   }
-  return { ok: true, file: out, bytes: buffer.length, kind: kindOf(splitFront(src).meta) }
+  return { ok: true, file: out, bytes: buffer.length, kind: kindOf(splitFront(src).meta), ...('slides' in r ? { slides: r.slides } : {}) }
+}
+/** Ruta de salida de Office: junto al .md (o donde diga), en Drive si se pide; .pptx para presentaciones. */
+async function salidaOffice(path: string, formato: string | undefined, out: string | undefined, drive: boolean): Promise<string> {
+  const deck = kindOf(splitFront(await docs.current(path)).meta) === 'presentacion'
+  const ext = /^(pptx|powerpoint|ppt)$/i.test(formato ?? '') || /\.pptx$/i.test(out ?? '') ? '.pptx' : /^(docx|word)$/i.test(formato ?? '') || /\.docx$/i.test(out ?? '') ? '.docx' : deck ? '.pptx' : '.docx'
+  if (out) return out
+  if (drive) {
+    const d = carpetaDrive()
+    if (!d) throw new Error('No encuentro Google Drive para escritorio (una unidad con «Mi unidad»). Instálalo o usa --out')
+    return join(d, basename(path, extname(path)) + ext)
+  }
+  return defaultOut(path, ext)
+}
+
+/** Un comentario con dónde está ahora: línea, bloque (#id, para «editar») y su Markdown. */
+function comentarioInfo(target: string, content: string, c: import('@shared/propuestas').Comentario): object {
+  const linea = lineaCita(content, c)
+  const b = linea ? indexOf(target, content).blocks.find((x) => x.line <= linea && x.end >= linea && x.type !== 'diapositiva') : undefined
+  const md = b ? content.split(/\r?\n/).slice(b.line - 1, b.end).join('\n') : undefined
+  return { ...c, ahora: linea, bloque: b ? { id: b.id, line: b.line, end: b.end, seccion: b.path, markdown: md } : null }
 }
 
 async function apiCall(method: string, p: Record<string, unknown>): Promise<unknown> {
@@ -120,13 +155,14 @@ async function apiCall(method: string, p: Record<string, unknown>): Promise<unkn
     return v
   }
   const path = (): string => docs.normPath(need('path', 'ruta del documento .md'))
-  const ai = (summary: string): { kind: ChangeKind; author: string; summary: string } => ({ kind: 'ai', author: s('author') ?? 'IA', summary: s('summary') ?? summary })
-  const result = (r: { changed: boolean; content: string; path: string }): object => ({
+  const ai = (summary: string): docs.Who => ({ kind: 'ai', author: s('author') ?? 'IA', summary: s('summary') ?? summary, proponer: p.proponer === true || p.proponer === 'true', comentario: s('comentario') })
+  const result = (r: { changed: boolean; content: string; path: string; propuesta?: string }): object => ({
     ok: true,
+    ...(r.propuesta ? { propuesta: r.propuesta, message: `Propuesta ${r.propuesta} pendiente: el usuario la acepta o la rechaza (buho-docs propuestas)` } : {}),
     changed: r.changed,
     path: r.path,
     lines: r.content.split(/\r?\n/).length,
-    ...(r.changed ? {} : { message: 'Sin cambios: el documento ya estaba así' })
+    ...(r.changed || r.propuesta ? {} : { message: 'Sin cambios: el documento ya estaba así' })
   })
   switch (method) {
     case 'status':
@@ -218,7 +254,11 @@ async function apiCall(method: string, p: Record<string, unknown>): Promise<unkn
     }
     case 'export': {
       const target = path()
-      if (/^(docx|word)$/i.test(s('formato') ?? '') || /\.docx$/i.test(s('out') ?? '')) return exportWord(target, s('out') ? resolve(s('out')!) : defaultOut(target, '.docx'))
+      const drive = p.drive === true || p.drive === 'true'
+      if (drive || /^(docx|word|pptx|powerpoint|ppt|office)$/i.test(s('formato') ?? '') || /\.(docx|pptx)$/i.test(s('out') ?? '')) {
+        const r = await exportWord(target, await salidaOffice(target, s('formato'), s('out') ? resolve(s('out')!) : undefined, drive))
+        return drive ? { ...r, drive: true, message: 'Guardado en Google Drive: se sube solo. En drive.google.com se abre con Documentos o Presentaciones de Google.' } : r
+      }
       const out = s('out') ? resolve(s('out')!) : defaultPdf(target)
       const r = await exportPdf(await docs.current(target), target, out)
       return { ok: true, ...r }
@@ -384,6 +424,93 @@ async function apiCall(method: string, p: Record<string, unknown>): Promise<unkn
       // CLI siempre activo: el comando se ejecuta aquí dentro (lo manda buho-docs.exe).
       const argv = Array.isArray(p.argv) ? p.argv.map(String) : []
       return runInApp(apiCall, argv, s('cwd') ?? process.cwd())
+    }
+    // ─── Revisión: propuestas (control de cambios) y comentarios ───
+    case 'revision': {
+      const target = path()
+      if (s('modo') !== undefined) revision.setModo(target, /^(s[ií]|on|true|1)$/i.test(s('modo')!))
+      const content = await docs.current(target)
+      const e = revision.estado(target)
+      return {
+        ok: true,
+        path: target,
+        modo: e.modo,
+        propuestas: e.propuestas.map((pr) => ({ ...pr, trozos: pr.trozos.map((t) => ({ ...t, ahora: lineaActual(content, t) })) })),
+        comentarios: e.comentarios.map((c) => comentarioInfo(target, content, c))
+      }
+    }
+    case 'aceptar':
+    case 'rechazar': {
+      const target = path()
+      const todas = p.todas === true || p.todas === 'true' || s('id') === 'todas'
+      const ids = todas ? [] : need('id', 'id de la propuesta (p…) o «todas»').split(',').map((x) => x.trim().replace(/^#/, ''))
+      const lista = revision.propuestas(target).filter((pr) => todas || ids.includes(pr.id))
+      if (!lista.length) throw new Error(todas ? 'No hay propuestas pendientes' : `No existe la propuesta ${ids.join(', ')} (mira buho-docs propuestas)`)
+      if (method === 'rechazar') {
+        revision.quitarPropuestas(target, lista.map((x) => x.id))
+        return { ok: true, rechazadas: lista.length }
+      }
+      let fallidos = 0
+      const r = await docs.applyChange(
+        target,
+        (src) => {
+          const x = aplicar(src, lista.flatMap((pr) => pr.trozos))
+          fallidos = x.fallidos.length
+          return x.content
+        },
+        { kind: 'ai', author: lista.length === 1 ? lista[0].autor : 'IA', summary: lista.length === 1 ? `${lista[0].resumen} (propuesta aceptada)` : `${lista.length} propuestas aceptadas`, directo: true }
+      )
+      revision.quitarPropuestas(target, lista.map((x) => x.id))
+      for (const pr of lista)
+        for (const cid of (pr.comentario ?? '').split(',').filter(Boolean))
+          try {
+            revision.responder(target, cid, 'Tú', '', true)
+          } catch {
+            /* comentario borrado */
+          }
+      return { ...result(r), aceptadas: lista.length, fallidos, ...(fallidos ? { message: `${fallidos} trozo(s) no encajaban ya (el texto cambió después) y no se aplicaron` } : {}) }
+    }
+    case 'comentarios': {
+      const target = path()
+      const content = await docs.current(target)
+      const solo = p.abiertos === true || p.abiertos === 'true'
+      return { ok: true, path: target, comentarios: revision.comentarios(target).filter((c) => !solo || c.estado === 'abierto').map((c) => comentarioInfo(target, content, c)) }
+    }
+    case 'comentar': {
+      const target = path()
+      const content = await docs.current(target)
+      const texto = need('texto', 'el comentario')
+      let cita = s('cita') ?? ''
+      let linea = Number(s('linea')) || 0
+      if (s('bloque')) {
+        const b = indexOf(target, content).blocks.find((x) => x.id === s('bloque')!.replace(/^#/, ''))
+        if (!b) throw new Error(`No existe el bloque ${s('bloque')} (mira buho-docs mapa)`)
+        linea = b.line
+        cita ||= content.split(/\r?\n/)[b.line - 1]
+      } else if (cita && !linea) linea = lineaCita(content, { cita, linea: 1 }) ?? 0
+      else if (linea && !cita) cita = content.split(/\r?\n/)[linea - 1] ?? ''
+      // Seleccionado en la página (texto sin sintaxis): se ancla a la línea del bloque y se guarda lo seleccionado.
+      let seleccion = s('seleccion')
+      if (cita && linea && lineaCita(content, { cita, linea }) === null) {
+        seleccion ??= cita
+        cita = content.split(/\r?\n/)[linea - 1] ?? ''
+      }
+      if (!cita.trim()) throw new Error('Di a qué se refiere: --cita "texto", --bloque #b… o --linea N')
+      if (!linea) throw new Error(`No encuentro «${cita.slice(0, 60)}» en el documento`)
+      const c = revision.comentar(target, { autor: s('author') ?? 'Tú', texto, cita, linea, ...(seleccion && seleccion !== cita ? { seleccion } : {}) })
+      return { ok: true, ...comentarioInfo(target, content, c) }
+    }
+    case 'responder': {
+      const target = path()
+      const c = revision.responder(target, need('id', 'id del comentario (c…)'), s('author') ?? 'IA', s('texto') ?? '', p.resolver === true || p.resolver === 'true')
+      return { ok: true, id: c.id, estado: c.estado }
+    }
+    case 'resolver': {
+      const target = path()
+      if (p.reabrir === true) revision.reabrir(target, need('id', 'id'))
+      else if (p.borrar === true || p.borrar === 'true') revision.borrarComentario(target, need('id', 'id'))
+      else revision.responder(target, need('id', 'id del comentario (c…)'), s('author') ?? 'Tú', '', true)
+      return { ok: true }
     }
     case 'nuevo': {
       // Borrador sin guardar (para agentes: devuelve su ruta; se guarda con «guardar»).
@@ -711,11 +838,13 @@ function registerIpc(): void {
       return { ok: false, error: (e as Error).message }
     }
   })
-  ipcMain.handle('exportWord', async (_e, path: string, choose: boolean) => {
+  ipcMain.handle('drive', () => carpetaDrive())
+  ipcMain.handle('exportWord', async (_e, path: string, choose: boolean | 'drive') => {
     try {
-      let out = defaultOut(path, '.docx')
-      if (choose) {
-        const r = await dialog.showSaveDialog(win!, { title: 'Exportar a Word', defaultPath: out, filters: [{ name: 'Documento de Word', extensions: ['docx'] }] })
+      let out = await salidaOffice(path, undefined, undefined, choose === 'drive')
+      const deck = out.endsWith('.pptx')
+      if (choose === true) {
+        const r = await dialog.showSaveDialog(win!, { title: deck ? 'Exportar a PowerPoint' : 'Exportar a Word', defaultPath: out, filters: [deck ? { name: 'Presentación de PowerPoint', extensions: ['pptx'] } : { name: 'Documento de Word', extensions: ['docx'] }] })
         if (r.canceled || !r.filePath) return { ok: false }
         out = r.filePath
       }
@@ -723,6 +852,19 @@ function registerIpc(): void {
     } catch (e) {
       return { ok: false, error: (e as Error).message }
     }
+  })
+  // Revisión desde la ventana: las mismas operaciones que la API.
+  ipcMain.handle('revision', async (_e, method: string, params: Record<string, unknown>) => {
+    if (!['revision', 'aceptar', 'rechazar', 'comentar', 'responder', 'resolver'].includes(method)) return { error: 'operación no permitida' }
+    try {
+      return await apiCall(method, params)
+    } catch (e) {
+      return { error: (e as Error).message }
+    }
+  })
+  ipcMain.handle('atender', async (_e, path: string) => {
+    const r = await runInApp(apiCall, ['atender', path, '--author', 'Claude'], dirname(path))
+    return { ok: r.code === 0, salida: (r.stdout + r.stderr).trim() }
   })
   ipcMain.handle('history', (_e, path: string) => listHistory(path, 300))
   ipcMain.handle('bloques', () => apiCall('bloques', {}))

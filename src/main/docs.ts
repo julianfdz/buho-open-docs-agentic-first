@@ -7,6 +7,7 @@ import { addHistory, ensureBaseline } from './history'
 import { markOwnWrite, unwatchFile, watchFile } from './watcher'
 import { forget, warm } from './exporter'
 import { esBorrador } from './borradores'
+import * as revision from './revision'
 
 /**
  * Documentos abiertos. El archivo en disco es la fuente de verdad: la app guarda lo que escribes
@@ -140,12 +141,29 @@ export async function current(path: string): Promise<string> {
  * Cambio de un agente o restauración: guarda pendientes de la app, aplica `fn` sobre lo que hay en
  * disco, escribe, anota en el historial y lo enseña en directo con el cambio resaltado.
  */
-export async function applyChange(path: string, fn: (src: string) => string, who: { kind: ChangeKind; author: string; summary: string }): Promise<{ changed: boolean; content: string; path: string }> {
+export interface Who {
+  kind: ChangeKind
+  author: string
+  summary: string
+  /** Dejarlo como propuesta (control de cambios) en vez de escribirlo. */
+  proponer?: boolean
+  /** Escribir aunque el documento esté en modo revisión (al aceptar una propuesta, en directo…). */
+  directo?: boolean
+  /** Comentario que originó el cambio. */
+  comentario?: string
+}
+
+export async function applyChange(path: string, fn: (src: string) => string, who: Who): Promise<{ changed: boolean; content: string; path: string; propuesta?: string }> {
   path = normPath(path)
   if (!isOpen(path)) openDoc(path, true)
   const before = await current(path)
   const after = fn(before)
   if (after === before) return { changed: false, content: after, path }
+  // Modo revisión (o --proponer): el cambio de un agente queda como propuesta para aceptar o rechazar.
+  if (who.kind === 'ai' && !who.directo && (who.proponer || revision.modoRevision(path))) {
+    const p = revision.proponer(path, before, after, who.author, who.summary, who.comentario)
+    return { changed: false, content: before, path, propuesta: p?.id }
+  }
   writeFileSync(path, after)
   markOwnWrite(path)
   known.set(key(path), after)
@@ -153,6 +171,13 @@ export async function applyChange(path: string, fn: (src: string) => string, who
   const change: DocChange = { path, content: after, kind: who.kind, author: who.author, summary: who.summary, focus: who.kind === 'ai' }
   bridge.send('doc-change', change)
   warm(path, after, 0)
+  // Hecho directamente a raíz de comentarios: quedan resueltos.
+  for (const id of (who.comentario ?? '').split(',').filter(Boolean))
+    try {
+      revision.responder(path, id, who.author, '', true)
+    } catch {
+      /* comentario que ya no existe */
+    }
   return { changed: true, content: after, path }
 }
 
@@ -276,6 +301,6 @@ export async function streamEnd(id: string): Promise<{ changed: boolean; path: s
   if (l.timer) clearTimeout(l.timer)
   lives.delete(st.key)
   const final = l.base
-  const r = await applyChange(l.path, () => final, { kind: 'ai', author: l.author, summary: l.summary })
+  const r = await applyChange(l.path, () => final, { kind: 'ai', author: l.author, summary: l.summary, directo: true })
   return { changed: r.changed, path: r.path, chars: text.length, pending: 0 }
 }
