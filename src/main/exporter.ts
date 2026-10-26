@@ -162,6 +162,24 @@ async function capture(page: number, width: number, total: number): Promise<Buff
   }
 }
 
+/**
+ * Texto de cada página tal como queda maquetada (lo que hay en la página 7, no en la sección 7): para
+ * que una IA lea o revise el documento página a página. Sin cabeceras ni pies.
+ */
+export function pagesText(source: string, path: string): Promise<{ kind: string; pages: { n: number; text: string; titles: string[] }[] }> {
+  return serial(async () => {
+    const result = shown?.path === path && shown.source === source ? (cache.get(key(path))?.result ?? (await render(source, path))) : await render(source, path)
+    const pages = (await win!.webContents.executeJavaScript(
+      `[...document.querySelectorAll('#root > .doc > .pg, #root > .deck > .slide')].map((p, i) => {
+        const body = p.querySelector('.pg-cuerpo, .s-cuerpo') ?? p
+        const titles = [...p.querySelectorAll('h1, h2, h3')].map((h) => h.textContent.trim()).filter(Boolean).slice(0, 6)
+        return { n: i + 1, text: (p.classList.contains('pg-portada') ? p.innerText : body.innerText).replace(/\\n{3,}/g, '\\n\\n').trim(), titles }
+      })`
+    )) as { n: number; text: string; titles: string[] }[]
+    return { kind: result.kind, pages }
+  })
+}
+
 export function closeExporter(): void {
   if (win && !win.isDestroyed()) win.destroy()
 }

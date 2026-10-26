@@ -22,11 +22,15 @@ Búho Docs (de Buho Corps Systems) hace **documentos A4** y **presentaciones 16:
 | Versión portable (carpeta descomprimida) | `<carpeta>\cli\buho-docs.cmd …` o `<carpeta>/cli/buho-docs …` |
 | Repositorio del proyecto (desarrollo) | `node bin/buho-docs.mjs …` |
 
-`buho-docs status` dice si responde. **Si la app está cerrada, el CLI la abre solo** (`--no-launch` para evitarlo). Esta guía la imprime `buho-docs skill`. Añade `--json` a cualquier comando para procesar la salida.
+`buho-docs status` dice si responde. **Si la app está cerrada, el CLI la abre solo** (`--no-launch` para evitarlo). Con la app abierta, `buho-docs` (un ejecutable nativo) le pasa el comando y la app lo ejecuta por dentro: ~45 ms por comando, y puedes lanzar muchos a la vez. Esta guía la imprime `buho-docs skill`. Añade `--json` a cualquier comando para procesar la salida.
 
 ## 2. Flujo recomendado
 
-**Crear:**
+**Crear de una frase (lo más rápido):** `buho-docs generar informe.md "de qué va, para quién" --paginas 10 [--tema corporativo]` (o `--kind presentacion`). Un modelo rápido hace el índice y luego cada sección la escribe otro modelo a la vez, en directo. ~10 páginas en ~40 s. Después repasa con `mapa`, `buscar` y `editar`/`batch`.
+
+**Importar algo que ya existe (Word, PDF, HTML, texto):** `buho-docs importar archivo.docx [--salida doc.md] [--tema id]`. Word sale bien al momento (títulos, listas, tablas, negritas, imágenes). Los PDF se maquetan con IA en paralelo (sus tablas no se recuperan con reglas); `--rapido` solo convierte. Por defecto se guarda en Documentos\Buho Docs: el original no se toca.
+
+**Crear escribiéndolo tú:**
 1. Escribe el Markdown completo en un archivo temporal (con tu herramienta de escribir archivos) siguiendo §4–§6.
 2. `buho-docs new "C:\ruta\Mi documento.md" --file borrador.md --author Claude` (o `--kind presentacion --title "…"` para partir de la plantilla). Se abre en la app.
 3. `buho-docs check "C:\ruta\Mi documento.md"`: páginas o diapositivas y avisos (diapositivas que no caben, iconos o imágenes que no existen). Corrige lo que salga.
@@ -78,6 +82,10 @@ buho-docs bloques | insertar <doc.md> <bloque> [--despues "Título"]           #
 buho-docs huecos <doc.md> | rellenar <doc.md> <id> (--imagen f.png [--ancho 80%] | --file c.md | --text "…")
 buho-docs indice <doc.md> [--niveles 2|3] [--quitar]                         # índice con números de página
 buho-docs mapa <doc.md> [--bloques]                    # secciones (y bloques) con id y tokens
+buho-docs paginas <doc.md>                             # cuántas páginas y qué trae cada una (tokens, títulos)
+buho-docs pagina <doc.md> <n> [--captura]              # el texto de esa página tal como sale (y su PNG)
+buho-docs importar <archivo.docx|.pdf|.html|.txt> [--salida doc.md] [--tema id] [--rapido]
+buho-docs generar <doc.md> "de qué va" [--paginas 10] [--kind presentacion] [--tema id]
 buho-docs buscar <doc.md> "consulta" | buho-docs buscar "consulta" --carpeta <carpeta>
 buho-docs leer <doc.md> [--seccion "T" | --bloque #id | --desde #id] [--max 2000] [--ids]   # texto limpio
 buho-docs bloque <doc.md> #id                          # un bloque (texto y Markdown)

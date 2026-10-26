@@ -10,10 +10,12 @@ import { unified } from '@shared/diff'
 import { CONTAINERS, LAYOUTS } from '@shared/syntax'
 import * as docs from './docs'
 import { historyBefore, historyEntry, listHistory, tagNextChange } from './history'
-import { checkDoc, closeExporter, exportPdf, snapshot } from './exporter'
+import { checkDoc, closeExporter, exportPdf, pagesText, snapshot } from './exporter'
 import { template } from './templates'
 import { editBlock, readClean, search, type BlockEditMode } from '@shared/index-ai'
 import { indexOf, mdFiles } from './indexcache'
+import { runInApp } from './clirun'
+import { importar } from './importar'
 import { crearTema, listarTemas, resolverTema, temasDir, type NuevoTema } from './temas'
 import { PLANTILLAS, desdePlantilla, plantillaById } from '@shared/plantillas'
 import { fechaHoy } from './templates'
@@ -325,6 +327,43 @@ async function apiCall(method: string, p: Record<string, unknown>): Promise<unkn
       const n = Number(s('niveles')) || 2
       return result(await docs.applyChange(path(), (src) => setIndex(src, on, n), ai(on ? 'Índice automático' : 'Índice quitado')))
     }
+    case 'importar': {
+      // Word, PDF, HTML o texto → documento de Búho Docs (en Documentos\Buho Docs si no se dice otra cosa).
+      const r = await importar(path(), { salida: s('salida') ? resolve(s('salida')!) : undefined, tema: s('tema') })
+      if (!(p.abrir === false || p.abrir === 'false')) {
+        docs.openDoc(r.path, true)
+        reveal()
+      }
+      return r
+    }
+    case 'paginas': {
+      // Cuántas páginas (o diapositivas) hay y qué trae cada una.
+      const target = path()
+      const r = await pagesText(await docs.current(target), target)
+      return { path: target, kind: r.kind, total: r.pages.length, pages: r.pages.map((pg) => ({ n: pg.n, tokens: Math.ceil(pg.text.length / 3.6), titles: pg.titles, preview: pg.text.replace(/\s+/g, ' ').slice(0, 100) })) }
+    }
+    case 'pagina': {
+      // El texto de una página tal como sale maquetada (y, con captura, su imagen).
+      const target = path()
+      const n = Number(need('n', 'número de página'))
+      const src = await docs.current(target)
+      const r = await pagesText(src, target)
+      const pg = r.pages[n - 1]
+      if (!pg) throw new Error(`No existe la página ${n} (hay ${r.pages.length})`)
+      let file: string | undefined
+      if (p.captura === true || p.captura === 'true') {
+        const shot = await snapshot(src, target, String(n), Number(s('width')) || 900)
+        file = s('out') ? resolve(s('out')!) : join(tmpdir(), 'buho-docs', `${basename(target, extname(target))}-p${n}.png`)
+        mkdirSync(dirname(file), { recursive: true })
+        writeFileSync(file, shot.images[0].png)
+      }
+      return { path: target, n, total: r.pages.length, kind: r.kind, tokens: Math.ceil(pg.text.length / 3.6), titles: pg.titles, text: pg.text, captura: file }
+    }
+    case 'cli': {
+      // CLI siempre activo: el comando se ejecuta aquí dentro (lo manda buho-docs.exe).
+      const argv = Array.isArray(p.argv) ? p.argv.map(String) : []
+      return runInApp(apiCall, argv, s('cwd') ?? process.cwd())
+    }
     case 'temas':
       return { carpeta: temasDir(), temas: listarTemas().map(({ css, ...t }) => ({ ...t, css: css ? `${css.length} caracteres` : undefined })) }
     case 'temaCrear': {
@@ -484,8 +523,33 @@ function registerIpc(): void {
   })
   ipcMain.handle('recent', () => docs.recent())
   ipcMain.handle('openDialog', async () => {
-    const r = await dialog.showOpenDialog(win!, { title: 'Abrir documento', filters: [{ name: 'Documentos Markdown', extensions: ['md', 'markdown'] }], properties: ['openFile'] })
-    return r.canceled ? null : docs.openDoc(r.filePaths[0])
+    const r = await dialog.showOpenDialog(win!, {
+      title: 'Abrir o importar',
+      filters: [
+        { name: 'Documentos (Markdown, Word, PDF, HTML, texto)', extensions: ['md', 'markdown', 'docx', 'pdf', 'html', 'htm', 'txt'] },
+        { name: 'Markdown', extensions: ['md', 'markdown'] },
+        { name: 'Word', extensions: ['docx'] },
+        { name: 'PDF', extensions: ['pdf'] }
+      ],
+      properties: ['openFile']
+    })
+    if (r.canceled) return null
+    const f = r.filePaths[0]
+    if (/\.(md|markdown)$/i.test(f)) return docs.openDoc(f)
+    // Word, PDF…: se importa a Documentos\Buho Docs (el original no se toca).
+    const base = join(app.getPath('documents'), 'Buho Docs', basename(f, extname(f)))
+    let salida = base + '.md'
+    for (let i = 2; existsSync(salida); i++) salida = `${base} (${i}).md`
+    if (/\.pdf$/i.test(f)) {
+      // Un PDF se maqueta con IA en paralelo (las tablas no se pueden recuperar con reglas): va en
+      // segundo plano y el documento aparece escribiéndose en directo.
+      void runInApp(apiCall, ['importar', f, '--salida', salida, '--tema', 'buho'], dirname(f)).then((r) => {
+        if (r.code !== 0) dialog.showErrorBox('No se pudo importar el PDF', (r.stderr || r.stdout).slice(-800))
+      })
+      return null
+    }
+    const imp = await importar(f, { salida })
+    return docs.openDoc(imp.path)
   })
   ipcMain.handle('open', (_e, path: string) => docs.openDoc(path))
   ipcMain.handle('create', async (_e, kind: DocKind, estilo?: string) => {

@@ -38,6 +38,10 @@ import { app } from 'electron'
  *   POST /v1/indice   {"path","niveles","quitar"}     → índice automático
  *   GET  /v1/temas · POST /v1/temas {"id","nombre","principal","acento","logo","marca","portada","base"…}
  *   GET  /v1/plantillas                             → plantillas genéricas (y las propias)
+ *   POST /v1/importar {"path","salida","tema"}     → Word, PDF, HTML o texto a Búho Docs
+ *   GET  /v1/paginas?path=                          → páginas (o diapositivas) con sus tokens y títulos
+ *   GET  /v1/pagina?path=&n=&captura=true&width=     → texto de una página tal como sale (y su PNG)
+ *   POST /v1/cli      {"argv","cwd"}                 → ejecutar un comando del CLI dentro de la app (buho-docs.exe)
  *   GET  /v1/mapa?path=&bloques=true                → índice para IAs: secciones (y bloques) con tokens e ids
  *   GET  /v1/leer?path=&seccion=&bloque=&desde=&max=&ids=true → texto limpio, con límite de tokens
  *   GET  /v1/buscar?q=&path=|carpeta=&limite=       → dónde se habla de algo (BM25 + parecido, sin modelos)
@@ -46,7 +50,7 @@ import { app } from 'electron'
  */
 export type ApiCall = (method: string, params: Record<string, unknown>) => Promise<unknown>
 
-const ROUTES: Record<string, string> = {
+export const ROUTES: Record<string, string> = {
   'GET /v1/status': 'status',
   'GET /v1/docs': 'docs',
   'GET /v1/templates': 'templates',
@@ -79,6 +83,10 @@ const ROUTES: Record<string, string> = {
   'POST /v1/indice': 'indice',
   'GET /v1/mapa': 'mapa',
   'GET /v1/temas': 'temas',
+  'POST /v1/cli': 'cli',
+  'GET /v1/paginas': 'paginas',
+  'POST /v1/importar': 'importar',
+  'GET /v1/pagina': 'pagina',
   'POST /v1/temas': 'temaCrear',
   'GET /v1/plantillas': 'plantillas',
   'GET /v1/leer': 'leer',
@@ -113,7 +121,17 @@ export function startApi(call: ApiCall): void {
     const method = ROUTES[`${req.method} ${url.pathname}`]
     if (!method) return send(404, { error: `Ruta desconocida: ${req.method} ${url.pathname}` })
     try {
-      send(200, await call(method, { ...Object.fromEntries(url.searchParams), ...body }))
+      const result = await call(method, { ...Object.fromEntries(url.searchParams), ...body })
+      if (method === 'cli' && url.searchParams.get('raw') === '1') {
+        // Para buho-docs.exe: sin JSON que interpretar (cada milisegundo cuenta).
+        const r = result as { stdout: string; stderr: string; code: number }
+        const err = Buffer.from(r.stderr ?? '', 'utf8')
+        const out = Buffer.from(r.stdout ?? '', 'utf8')
+        res.writeHead(200, { 'content-type': 'application/octet-stream', 'x-code': String(r.code ?? 0), 'x-stderr-bytes': String(err.length), 'content-length': String(err.length + out.length) })
+        res.end(Buffer.concat([err, out]))
+        return
+      }
+      send(200, result)
     } catch (e) {
       send(400, { error: e instanceof Error ? e.message : String(e) })
     }

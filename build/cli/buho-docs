@@ -1,7 +1,5 @@
 #!/bin/sh
-# buho-docs: CLI de Buho Docs (Git Bash, MSYS, WSL). Usa el ejecutable de la app en modo Node.
+# buho-docs: CLI de Buho Docs (Git Bash, MSYS, WSL). buho-docs.exe habla con la app abierta en milisegundos.
 # Guia completa para agentes: buho-docs skill
 dir=$(cd "$(dirname "$0")" && pwd)
-script="$dir/buho-docs.mjs"
-if command -v wslpath >/dev/null 2>&1; then script=$(wslpath -w "$script"); fi
-ELECTRON_RUN_AS_NODE=1 exec "$dir/../BuhoDocs.exe" "$script" "$@"
+exec "$dir/buho-docs.exe" "$@"

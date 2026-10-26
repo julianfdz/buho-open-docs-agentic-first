@@ -15,6 +15,9 @@ extraFiles:
     to: cli/buho-docs.mjs
   - from: build/cli
     to: cli
+  # Cliente nativo del CLI (milisegundos con la app abierta): scripts/build-client.mjs
+  - from: out-cli/buho-docs.exe
+    to: cli/buho-docs.exe
   - from: skills/buho-docs/SKILL.md
     to: cli/SKILL.md
   - from: skills/buho-docs/SKILL.md

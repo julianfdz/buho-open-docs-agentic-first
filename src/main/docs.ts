@@ -105,6 +105,8 @@ export function createDoc(path: string, content: string, author: string, kind: C
   if (!/\.md$/i.test(path)) path += '.md'
   if (existsSync(path)) throw new Error(`Ya existe ${path}`)
   mkdirSync(dirname(path), { recursive: true })
+  dropLive(key(path))
+  if (isOpen(path)) closeDoc(path)
   writeFileSync(path, content)
   const d = openDoc(path, false)
   addHistory(path, { kind, author, summary: 'Documento creado' }, content)
@@ -174,6 +176,18 @@ interface Live {
   author: string
   summary: string
   timer: NodeJS.Timeout | null
+  /** Última señal de vida (si una escritura se corta a medias, el estado caduca). */
+  touched: number
+}
+
+/** Escrituras en directo abandonadas (un generador que se cerró sin terminar) no bloquean el documento. */
+const STALE_MS = 45_000
+function dropLive(k: string): void {
+  const l = lives.get(k)
+  if (!l) return
+  if (l.timer) clearTimeout(l.timer)
+  lives.delete(k)
+  for (const [id, st] of streams) if (st.key === k) streams.delete(id)
 }
 const lives = new Map<string, Live>()
 const streams = new Map<string, { key: string; mark: string }>()
@@ -204,10 +218,12 @@ export async function streamStart(path: string, place: (src: string, mark: strin
   if (!isOpen(path)) openDoc(path, true)
   const k = key(path)
   // Muchas escrituras pueden empezar a la vez: el estado del documento se crea una sola vez.
+  const old = lives.get(k)
+  if (old && Date.now() - old.touched > STALE_MS) dropLive(k)
   let ready = starting.get(k)
   if (!lives.has(k) && !ready) {
     ready = current(path).then((base) => {
-      lives.set(k, { path, base, texts: new Map(), active: new Set(), author, summary, timer: null })
+      lives.set(k, { path, base, texts: new Map(), active: new Set(), author, summary, timer: null, touched: Date.now() })
       starting.delete(k)
     })
     starting.set(k, ready)
@@ -218,6 +234,7 @@ export async function streamStart(path: string, place: (src: string, mark: strin
   const base = place(l.base, mark)
   if (!base.includes(mark)) throw new Error('No se ha podido colocar el texto en el documento')
   l.base = base
+  l.touched = Date.now()
   l.texts.set(mark, '')
   l.active.add(mark)
   if (l.active.size > 1) l.summary = `${l.active.size} textos escritos en paralelo`
@@ -231,6 +248,7 @@ export function streamChunk(id: string, text: string): void {
   const l = st && lives.get(st.key)
   if (!st || !l) throw new Error('Esa escritura en directo ya ha terminado o no existe')
   l.texts.set(st.mark, (l.texts.get(st.mark) ?? '') + text)
+  l.touched = Date.now()
   scheduleSend(l)
 }
 

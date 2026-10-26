@@ -274,6 +274,26 @@ try {
   await cli('open', doc)
   await frame.locator('.pg').first().waitFor()
 
+  // ─── Páginas para IAs ─────────────────────────────────────────────────────────────────────
+  const pgs = await cliJson('paginas', doc)
+  check(pgs.total >= 3 && pgs.pages[1].tokens > 50, `paginas: ${pgs.total} páginas con su texto`)
+  const pg2 = await cliJson('pagina', doc, '2', '--captura', '--width', '400', '--out', join(out, 'pagina2-captura.png'))
+  check(pg2.text.length > 100 && existsSync(pg2.captura), `pagina 2 --captura: ${pg2.tokens} tokens + PNG`)
+
+  // ─── Importar Word / HTML ─────────────────────────────────────────────────────────────────
+  const html = join(out, 'origen.html')
+  writeFileSync(html, '<h1>Informe importado de prueba</h1><p>Texto con <b>negrita</b>.</p><h2>1. Primera parte</h2><ul><li>Uno</li><li>Dos</li></ul><table><tr><td>A</td><td>B</td></tr><tr><td>1</td><td>2</td></tr></table>')
+  const imp = await cliJson('importar', html, '--salida', join(out, 'docs', 'importado.md'), '--tema', 'corporativo')
+  const impTxt = text(imp.path)
+  check(imp.titulo === 'Informe importado de prueba' && /## 1\. Primera parte/.test(impTxt) && /\*\*negrita\*\*/.test(impTxt) && /\| A \| B \|/.test(impTxt), 'importar HTML: título, secciones, negrita y tabla')
+
+  // ─── CLI siempre activo (lo que hace buho-docs.exe) ───────────────────────────────────────
+  const info = JSON.parse(readFileSync(join(out, 'data', 'api.json'), 'utf8'))
+  const enApp = await (await fetch(info.url + '/v1/cli?raw=1', { method: 'POST', headers: { authorization: `Bearer ${info.token}`, 'content-type': 'application/json' }, body: JSON.stringify({ argv: ['buscar', doc, 'beneficio'], cwd: root }) })).text()
+  check(/#b[0-9a-z]+/.test(enApp), 'El CLI se ejecuta dentro de la app (POST /v1/cli)')
+  const varios = await Promise.all(Array.from({ length: 12 }, (_, i) => fetch(info.url + '/v1/cli', { method: 'POST', headers: { authorization: `Bearer ${info.token}`, 'content-type': 'application/json' }, body: JSON.stringify({ argv: ['mapa', doc], cwd: root }) }).then((r) => r.json())))
+  check(varios.every((r) => r.code === 0 && r.stdout.includes('tokens')), '12 comandos a la vez dentro de la app')
+
   // PDF A4.
   const pdf = await cliJson('export', doc)
   check(existsSync(pdf.file) && pdf.pages >= 3 && readFileSync(pdf.file).subarray(0, 5).toString() === '%PDF-', `PDF A4: ${pdf.pages} páginas, ${(pdf.bytes / 1024).toFixed(0)} KB`)

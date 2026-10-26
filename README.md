@@ -19,6 +19,10 @@ Hacer un PDF bonito con una IA suele ser: pedirlo, esperar a que genere un scrip
 - **Bloques prediseñados, índice y huecos**: cajas, tarjetas, tablas, pasos… de un clic; índice automático con números de página; huecos que se rellenan cuando llega una imagen o un texto de otro agente.
 - **Temas como paquetes**: colores, letras, logo, marca y portada (`tema: buho|blanco|corporativo|calido|moderno` o uno propio, creado desde la app en un minuto o con `buho-docs tema crear`), más `css:` para retoques.
 - **Plantillas genéricas**: acta, factura, presupuesto, propuesta, informe, carta, guía, one-pager, plan de proyecto, currículum, y presentaciones de pitch, formación y resultados; las tuyas, como .md en la carpeta de datos.
+- **CLI instantáneo**: con la app abierta, `buho-docs` es un ejecutable nativo de 10 KB que le pasa el comando a la app (que lo ejecuta por dentro y atiende muchos a la vez): ~45 ms por comando.
+- **De una frase a un documento**: `buho-docs generar informe.md "guía de ciberseguridad para una pyme" --paginas 8`: un modelo hace el índice y varios escriben las secciones a la vez (~40 s).
+- **Importar**: Word (.docx), PDF, HTML y texto a Búho Docs (`buho-docs importar` o Abrir en la app). Word sale al momento con títulos, tablas e imágenes; los PDF se maquetan con IA en paralelo.
+- **Por páginas**: `paginas` (qué hay en cada una) y `pagina N [--captura]` (su texto tal como sale, y la imagen).
 - **Lectura rápida para IAs**: `mapa` (secciones con tokens), `leer` (texto limpio con límite de tokens), `buscar` (determinista: palabras, frase exacta y erratas, en milisegundos, en un documento o una carpeta) e **ids por bloque** para cambiar un párrafo exacto con `editar #b…`.
 
 ## Plantilla Búho

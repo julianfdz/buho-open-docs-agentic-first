@@ -25,6 +25,7 @@
  *   buho-docs stream <archivo.md> [--section "Título"] [--mode body|append|after|write] [--claude] < texto
  *                                                   (el texto aparece en directo mientras llega)
  *   buho-docs snapshot <archivo.md> [--pages 1-3,8|todas] [--width 900] [--out p.png | --dir carpeta]   (fotos de páginas)
+ *   buho-docs generar <archivo.md> "de qué va" [--paginas 10] [--kind presentacion] [--tema id]   (plan automático)
  *   buho-docs generar <archivo.md> --plan plan.json [--modelo haiku] [--paralelo 8]   (secciones o diapositivas
  *                                                   escritas a la vez por varios modelos, en directo)
  *   buho-docs bloques | insertar <archivo.md> <bloque> [--despues "Título"]   (bloques ya maquetados)
@@ -35,6 +36,9 @@
  *   buho-docs tema <archivo.md> <id>                 (aplicar un tema al documento)
  *   Para IAs (leer rápido y limpio, cambiar por id):
  *   buho-docs mapa <archivo.md> [--bloques]          (secciones con tokens e ids)
+ *   buho-docs importar <archivo.docx|.pdf|.html|.txt> [--salida doc.md] [--tema id] [--ia]   (a Búho Docs; --ia lo maqueta con IA en paralelo;
+ *                                                   los PDF van con IA salvo --rapido)
+ *   buho-docs paginas <archivo.md>  ·  buho-docs pagina <archivo.md> <n> [--captura]   (texto, e imagen, de cada página)
  *   buho-docs leer <archivo.md> [--seccion "T" | --bloque #id | --desde #id] [--max 2000] [--ids]
  *   buho-docs buscar <archivo.md> "consulta"  ·  buho-docs buscar "consulta" --carpeta <carpeta>
  *   buho-docs bloque <archivo.md> #id  ·  buho-docs editar <archivo.md> #id --file nuevo.md [--mode replace|before|after|delete]
@@ -42,22 +46,18 @@
  * El texto nuevo se pasa con --file <ruta>, con --text "…" o con - (entrada estándar).
  * Opciones globales: --author <nombre> (firma en el historial), --json, --no-launch.
  */
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { spawn } from 'node:child_process'
-import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { basename, dirname, join, resolve } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
 // Versión portable (portable.txt junto a BuhoDocs.exe): los datos, y con ellos api.json, van en «datos».
 const portableDir = existsSync(join(here, '..', 'portable.txt')) ? join(here, '..', 'datos') : null
 const dataDir = process.env.BUHO_DATA_DIR || portableDir || join(process.env.APPDATA || join(process.env.HOME || '', '.config'), 'BuhoDocs')
 
-function die(msg, code = 1) {
-  process.stderr.write(msg + '\n')
-  process.exit(code)
-}
 
-const FLAGS = new Set(['all', 'lines', 'json', 'no-launch', 'stdin', 'path', 'help', 'claude', 'quitar', 'ids', 'bloques', 'borrar'])
+const FLAGS = new Set(['all', 'lines', 'json', 'no-launch', 'stdin', 'path', 'help', 'claude', 'quitar', 'ids', 'bloques', 'borrar', 'captura', 'ia', 'rapido'])
 function parseArgs(argv) {
   const pos = []
   const opt = {}
@@ -74,7 +74,16 @@ function parseArgs(argv) {
   }
   return { pos, opt }
 }
-const { pos, opt } = parseArgs(process.argv.slice(2))
+export async function runCli(argv, io) {
+  const R = (p) => resolve(io.cwd, p)
+  const exitWith = (code) => {
+    throw new CliExit(code)
+  }
+  const die = (msg, code = 1) => {
+    io.err(msg + '\n')
+    throw new CliExit(code)
+  }
+const { pos, opt } = parseArgs(argv)
 const [cmd, ...args] = pos
 
 const readInfo = () => {
@@ -106,12 +115,12 @@ async function alive(info) {
 async function connect() {
   let info = readInfo()
   if (await alive(info)) return info
-  const exe = opt['no-launch'] || process.env.BUHO_NO_LAUNCH ? undefined : appExe()
+  const exe = opt['no-launch'] || io.env.BUHO_NO_LAUNCH ? undefined : appExe()
   if (!exe) die('Búho Docs no está abierto. Ábrelo (o instala la app) y vuelve a intentarlo.', 2)
   const env = { ...process.env }
   delete env.ELECTRON_RUN_AS_NODE
   spawn(exe, [], { detached: true, stdio: 'ignore', env }).unref()
-  process.stderr.write('Abriendo Búho Docs…\n')
+  io.err('Abriendo Búho Docs…\n')
   for (let i = 0; i < 80; i++) {
     await new Promise((r) => setTimeout(r, 250))
     info = readInfo()
@@ -121,7 +130,7 @@ async function connect() {
 }
 
 let conn = null
-async function call(method, path, body) {
+async function httpCall(method, path, body) {
   conn ??= await connect()
   let res
   try {
@@ -137,6 +146,7 @@ async function call(method, path, body) {
   if (!res.ok) die(`Error: ${data.error ?? res.status}`)
   return data
 }
+const call = io.call ?? httpCall
 
 const qs = (o) => {
   const p = new URLSearchParams()
@@ -145,26 +155,26 @@ const qs = (o) => {
   return s ? `?${s}` : ''
 }
 
-const out = (o) => process.stdout.write(JSON.stringify(o, null, 2) + '\n')
-const print = (s) => process.stdout.write(s + '\n')
+const out = (o) => io.out(JSON.stringify(o, null, 2) + '\n')
+const print = (s) => io.out(s + '\n')
 
 const file = (i, what = 'archivo .md') => {
   const a = args[i]
   if (!a) die(`Falta el ${what}. Uso: buho-docs ${cmd} <archivo.md> …  (buho-docs help)`)
-  return resolve(a)
+  return R(a)
 }
 
 async function readStdin() {
   const chunks = []
-  for await (const c of process.stdin) chunks.push(c)
+  for await (const c of io.stdin) chunks.push(c)
   return Buffer.concat(chunks).toString('utf8').replace(/^\uFEFF/, '')
 }
 
 /** Texto nuevo: --file, --text, - (entrada estándar) o el argumento en la posición indicada. */
 async function content(i, required = true) {
   if (typeof opt.file === 'string') {
-    if (!existsSync(opt.file)) die(`No existe ${opt.file}`)
-    return readFileSync(opt.file, 'utf8').replace(/^\uFEFF/, '')
+    if (!existsSync(R(opt.file))) die(`No existe ${opt.file}`)
+    return readFileSync(R(opt.file), 'utf8').replace(/^\uFEFF/, '')
   }
   if (typeof opt.text === 'string') return opt.text
   if (opt.stdin || args[i] === '-') return readStdin()
@@ -266,7 +276,7 @@ switch (cmd) {
       const ls = r.content.split(/\r?\n/)
       const w = String(ls.length).length
       print(ls.map((l, i) => `${String(i + 1).padStart(w)}  ${l}`).join('\n'))
-    } else process.stdout.write(r.content)
+    } else io.out(r.content)
     break
   }
   case 'outline': {
@@ -320,8 +330,8 @@ switch (cmd) {
   }
   case 'export': {
     const path = file(0)
-    process.stderr.write('Exportando a PDF…\n')
-    const r = await call('POST', '/v1/export', { path, out: typeof opt.out === 'string' ? resolve(opt.out) : undefined })
+    io.err('Exportando a PDF…\n')
+    const r = await call('POST', '/v1/export', { path, out: typeof opt.out === 'string' ? R(opt.out) : undefined })
     if (opt.json) { out(r); break }
     print(`PDF: ${r.file} · ${r.pages} ${r.kind === 'presentacion' ? 'diapositivas' : 'páginas'} · ${(r.bytes / 1024).toFixed(0)} KB`)
     for (const w of r.warnings) print(`  ${w.level === 'error' ? 'ERROR' : 'aviso'}${w.slide ? ` diap. ${w.slide}` : ''}${w.line ? ` línea ${w.line}` : ''}: ${w.message}`)
@@ -381,8 +391,8 @@ switch (cmd) {
     // "file": ruta → el contenido sale de ese archivo (sin escapar saltos de línea en el JSON).
     for (const o of ops) {
       if (typeof o.file === 'string') {
-        if (!existsSync(o.file)) die(`No existe ${o.file}`)
-        o.content = readFileSync(o.file, 'utf8').replace(/^\uFEFF/, '')
+        if (!existsSync(R(o.file))) die(`No existe ${o.file}`)
+        o.content = readFileSync(R(o.file), 'utf8').replace(/^\uFEFF/, '')
         delete o.file
       }
     }
@@ -410,7 +420,7 @@ switch (cmd) {
       timer ??= setTimeout(flush, 40)
     }
     if (opt.claude) {
-      await pipeClaude(process.stdin, st.id)
+      await pipeClaude(io.stdin, st.id)
       const r = await call('POST', '/v1/stream/end', { id: st.id })
       opt.json ? out(r) : print(`Escrito en directo: ${r.chars} caracteres · ${r.path}`)
       break
@@ -419,7 +429,7 @@ switch (cmd) {
     let buf = ''
     let streamed = false
     let finalText = ''
-    for await (const chunk of process.stdin) {
+    for await (const chunk of io.stdin) {
       const t = chunk.toString('utf8')
       if (!opt.claude) {
         push(t)
@@ -452,16 +462,69 @@ switch (cmd) {
     break
   }
   case 'snapshot': {
-    const r = await call('GET', '/v1/snapshot' + qs({ path: file(0), pages: opt.pages ?? opt.page, width: opt.width, out: typeof opt.out === 'string' ? resolve(opt.out) : undefined, dir: typeof opt.dir === 'string' ? resolve(opt.dir) : undefined }))
+    const r = await call('GET', '/v1/snapshot' + qs({ path: file(0), pages: opt.pages ?? opt.page, width: opt.width, out: typeof opt.out === 'string' ? R(opt.out) : undefined, dir: typeof opt.dir === 'string' ? R(opt.dir) : undefined }))
     opt.json ? out(r) : print(r.files.map((x) => x.file).join('\n'))
     break
   }
   case 'generar': {
+    async function planDesde(sobre) {
+      const presentacion = /^presentaci|^slides?$|^deck$/i.test(opt.kind ?? '')
+      const paginas = Math.max(1, Number(opt.paginas) || (presentacion ? 8 : 10))
+      const partes = presentacion ? paginas : Math.max(3, Math.round(paginas * 0.8))
+      const palabras = presentacion ? 50 : Math.round((paginas * 380) / partes)
+      const t = Date.now()
+      io.err(`Pensando el plan (${partes} ${presentacion ? 'diapositivas' : 'secciones'})…\n`)
+      const pedir = [
+        `Prepara el plan de ${presentacion ? 'una presentación de ' + partes + ' diapositivas' : 'un documento de unas ' + paginas + ' páginas A4 con ' + partes + ' secciones'} sobre: «${sobre}».`,
+        'Español de España. Devuelve SOLO un JSON válido, sin texto alrededor ni bloques de código, con esta forma:',
+        presentacion
+          ? '{"titulo": "…", "contexto": "para quién es y con qué tono, en una frase", "diapositivas": [{"titulo": "…", "etiqueta": "EN MAYÚSCULAS", "diseno": "portada|normal|seccion|cierre", "pide": "qué debe contar, concreto"}]} (la primera con diseno portada y la última cierre)'
+          : '{"titulo": "…", "subtitulo": "…", "etiqueta": "TEMA · SUBTEMA EN MAYÚSCULAS", "contexto": "para quién es y con qué tono, en una frase", "secciones": [{"titulo": "1. …", "pide": "qué debe contar, concreto, en una o dos frases"}]}',
+        'Los títulos de sección, numerados y cortos. Que las partes no se solapen.'
+      ].join('\n')
+      const out = await new Promise((ok, ko) => {
+        const child = spawn('claude', ['-p', '--model', opt['modelo-plan'] ?? 'haiku', '--output-format', 'json'], { shell: process.platform === 'win32', stdio: ['pipe', 'pipe', 'pipe'] })
+        let o = ''
+        child.stdout.on('data', (d) => (o += d))
+        child.on('error', ko)
+        child.on('close', () => ok(o))
+        child.stdin.end(pedir)
+      })
+      let res
+      try {
+        res = JSON.parse(out)
+      } catch {
+        die(`El modelo no ha devuelto un plan: ${String(out).slice(0, 200)}`)
+      }
+      if (res.is_error) die(`No se pudo hacer el plan: ${res.result}${/auth|login|OAuth/i.test(String(res.result)) ? '. Ejecuta «claude» en una terminal e inicia sesión.' : ''}`)
+      const txt = String(res.result ?? '')
+      const json = txt.slice(txt.indexOf('{'), txt.lastIndexOf('}') + 1)
+      let p
+      try {
+        p = JSON.parse(json)
+      } catch {
+        die(`El plan no es JSON válido: ${txt.slice(0, 200)}`)
+      }
+      p.tipo = presentacion ? 'presentacion' : 'documento'
+      if (!presentacion) p.palabras = palabras
+      const lista = (presentacion ? p.diapositivas : p.secciones) ?? []
+      io.err(`Plan en ${((Date.now() - t) / 1000).toFixed(1)} s: «${p.titulo}»\n${lista.map((x) => '  · ' + x.titulo).join('\n')}\n`)
+      return p
+    }
     // Generación en paralelo: un plan con secciones (o diapositivas); cada una la escribe un modelo
     // distinto a la vez, en directo, en su hueco del documento.
     const path = file(0)
-    if (typeof opt.plan !== 'string' || !existsSync(opt.plan)) die('Uso: buho-docs generar <archivo.md> --plan plan.json [--modelo haiku] [--paralelo 8]  (formato del plan en buho-docs skill)')
-    const plan = JSON.parse(readFileSync(opt.plan, 'utf8').replace(/^﻿/, ''))
+    let plan
+    if (typeof opt.plan === 'string') {
+      if (!existsSync(R(opt.plan))) die(`No existe ${opt.plan}`)
+      plan = JSON.parse(readFileSync(R(opt.plan), 'utf8').replace(/^\uFEFF/, ''))
+    } else {
+      // De una frase: un modelo rápido hace el plan (índice y qué contar en cada parte).
+      const sobre = typeof opt.sobre === 'string' ? opt.sobre : args[1]
+      if (!sobre) die('Uso: buho-docs generar <archivo.md> "de qué va el documento" [--paginas 10] [--kind presentacion] [--tema id]  ·  o con --plan plan.json')
+      plan = await planDesde(sobre)
+    }
+    if (typeof opt.tema === 'string') plan.tema = opt.tema
     const deck = /^presentaci/i.test(plan.tipo ?? '') || Array.isArray(plan.diapositivas)
     const items = (deck ? plan.diapositivas : plan.secciones) ?? []
     if (!items.length) die('El plan no tiene «secciones» (documento) ni «diapositivas» (presentación)')
@@ -482,19 +545,19 @@ switch (cmd) {
     if (existsSync(path)) {
       await call('POST', '/v1/batch', { path, ops: [{ op: 'append', content: skel }], author: quien })
     } else {
-      const front = ['---', `tipo: ${deck ? 'presentacion' : 'documento'}`, plan.estilo ? `estilo: ${plan.estilo}` : null, `titulo: ${q(plan.titulo ?? 'Sin título')}`, plan.subtitulo ? `subtitulo: ${q(plan.subtitulo)}` : null, plan.etiqueta ? `etiqueta: ${q(plan.etiqueta)}` : null, '---', '']
+      const front = ['---', `tipo: ${deck ? 'presentacion' : 'documento'}`, plan.tema ? `tema: ${plan.tema}` : plan.estilo ? `estilo: ${plan.estilo}` : null, `titulo: ${q(plan.titulo ?? 'Sin título')}`, plan.subtitulo ? `subtitulo: ${q(plan.subtitulo)}` : null, plan.etiqueta ? `etiqueta: ${q(plan.etiqueta)}` : null, '---', '']
         .filter((l) => l !== null)
         .join('\n')
       await call('POST', '/v1/batch', { path, ops: [{ op: 'write', content: front + '\n' + skel }], author: quien })
     }
-    process.stderr.write(`Esqueleto con ${items.length} ${deck ? 'diapositivas' : 'secciones'} en ${Date.now() - t0} ms. Escribiendo ${Math.min(paralelo, items.length)} a la vez con ${modelo}…\n`)
+    io.err(`Esqueleto con ${items.length} ${deck ? 'diapositivas' : 'secciones'} en ${Date.now() - t0} ms. Escribiendo ${Math.min(paralelo, items.length)} a la vez con ${modelo}…\n`)
     // 2 · Un modelo por sección, `paralelo` a la vez, cada uno escribiendo en directo en su hueco.
     const sintaxis = deck
       ? 'Es el CONTENIDO de una diapositiva 16:9 (sin el título, que ya está). Muy breve: de 3 a 5 viñetas cortas, o un bloque «::: tarjetas 2» o «::: tarjetas 3» con «### Título {icon=reloj}» y una línea de texto por tarjeta, o un «::: cifras 3» con «- **cifra** texto». Como mucho 60 palabras.'
       : `Es el CUERPO de una sección de un documento A4 (sin el título, que ya está). Unas ${'${palabras}'} palabras. Párrafos claros, negritas para lo importante, alguna lista. Puedes usar como mucho un bloque visual: «::: caja icon=bombilla» … «:::», o «::: tarjetas 3» con «### Título {icon=reloj}» y texto, o una tabla Markdown.`
     const breve = 'Es el texto de una diapositiva de portada o de cierre: solo una o dos frases cortas (con alguna negrita), sin listas ni bloques.'
     // Modo convertir: la parte trae su texto original («fuente», o «fuente_archivo») y solo se maqueta.
-    const fuenteDe = (it) => it.fuente ?? (it.fuente_archivo ? readFileSync(it.fuente_archivo, 'utf8') : '')
+    const fuenteDe = (it) => it.fuente ?? (it.fuente_archivo ? readFileSync(R(it.fuente_archivo), 'utf8') : '')
     const convertir = (it, i) =>
       [
         `Convierte a Markdown de Búho Docs la parte ${i + 1} de ${items.length} («${it.titulo}») de un documento titulado «${plan.titulo ?? ''}». Es un texto extraído de un PDF o Word: los saltos de línea y columnas pueden estar rotos.`,
@@ -527,11 +590,11 @@ switch (cmd) {
         await call('POST', '/v1/stream/chunk', { id: st.id, text: `::: hueco id=${id(i)} texto="Falló: ${why}"\n:::` })
         await call('POST', '/v1/stream/end', { id: st.id })
         fallos.push(`${it.titulo}: ${why}`)
-        process.stderr.write(`  ✗ ${it.titulo} · ${why}\n`)
+        io.err(`  ✗ ${it.titulo} · ${why}\n`)
         return null
       }
       const r = await call('POST', '/v1/stream/end', { id: st.id })
-      process.stderr.write(`  ✓ ${it.titulo} · ${r.chars} caracteres · ${((Date.now() - t) / 1000).toFixed(1)} s\n`)
+      io.err(`  ✓ ${it.titulo} · ${r.chars} caracteres · ${((Date.now() - t) / 1000).toFixed(1)} s\n`)
       return r
     }
     const fallos = []
@@ -547,8 +610,8 @@ switch (cmd) {
       for (const w of ck.warnings) print(`  ${w.level === 'error' ? 'ERROR' : 'aviso'}${w.slide ? ` diap. ${w.slide}` : ''}${w.line ? ` línea ${w.line}` : ''}: ${w.message}`)
     }
     if (fallos.length) {
-      process.stderr.write(`\n${fallos.length} parte(s) fallaron y quedan como hueco:\n  ${fallos.join('\n  ')}\n${/auth|login|OAuth/i.test(fallos.join(' ')) ? 'Parece que la sesión de claude ha caducado: abre una terminal, ejecuta «claude» e inicia sesión.\n' : ''}`)
-      process.exit(1)
+      io.err(`\n${fallos.length} parte(s) fallaron y quedan como hueco:\n  ${fallos.join('\n  ')}\n${/auth|login|OAuth/i.test(fallos.join(' ')) ? 'Parece que la sesión de claude ha caducado: abre una terminal, ejecuta «claude» e inicia sesión.\n' : ''}`)
+      exitWith(1)
     }
     break
   }
@@ -601,13 +664,61 @@ switch (cmd) {
   case 'tema': {
     if (args[0] === 'crear') {
       if (!args[1]) die('Uso: buho-docs tema crear <id> --principal "#1f3b63" --acento "#2f80ed" [--nombre "…"] [--logo logo.png] [--marca "…"] [--portada simple|ninguna]')
-      const r = await call('POST', '/v1/temas', { id: args[1], nombre: opt.nombre, principal: opt.principal, acento: opt.acento, suave: opt.suave, texto: opt.color_texto, titulos: opt.titulos, fuenteTexto: opt.texto, logo: typeof opt.logo === 'string' ? resolve(opt.logo) : undefined, marca: opt.marca, pie: opt.pie, portada: opt.portada, base: opt.base })
+      const r = await call('POST', '/v1/temas', { id: args[1], nombre: opt.nombre, principal: opt.principal, acento: opt.acento, suave: opt.suave, texto: opt.color_texto, titulos: opt.titulos, fuenteTexto: opt.texto, logo: typeof opt.logo === 'string' ? R(opt.logo) : undefined, marca: opt.marca, pie: opt.pie, portada: opt.portada, base: opt.base })
       opt.json ? out(r) : print(`Tema «${r.nombre}» creado (${r.id}). Úsalo con: buho-docs tema <archivo.md> ${r.id}`)
       break
     }
     const path = file(0)
     if (!args[1]) die('Uso: buho-docs tema <archivo.md> <id>  (ids en buho-docs temas)')
     changed(await call('POST', '/v1/batch', { path, ops: [{ op: 'meta', key: 'estilo', value: null }, { op: 'meta', key: 'tema', value: args[1] }], author: author() }))
+    break
+  }
+  case 'importar': {
+    const src = file(0, 'archivo a importar (.docx, .pdf, .html, .txt)')
+    const salida = typeof opt.salida === 'string' ? R(opt.salida) : undefined
+    const t0 = Date.now()
+    // Los PDF no tienen estructura (las tablas salen aplanadas): por defecto se maquetan con IA en
+    // paralelo. Con --rapido, solo la conversión automática (segundos, sin IA). Word va bien sin IA.
+    if (/\.pdf$/i.test(src) && !opt.rapido) opt.ia = true
+    const r = await call('POST', '/v1/importar', { path: src, salida, tema: opt.ia ? undefined : opt.tema, abrir: !opt.ia })
+    if (!opt.ia) {
+      if (opt.json) { out(r); break }
+      print(`Importado en ${r.ms} ms: «${r.titulo}» · ${r.palabras} palabras · ${r.secciones.length} secciones${r.imagenes ? ` · ${r.imagenes} imágenes` : ''}\n${r.path}`)
+      for (const a of r.avisos) io.err(`  aviso: ${a}\n`)
+      break
+    }
+    // --ia: el texto importado se reparte por secciones y varios modelos lo maquetan a la vez (sin
+    // resumir ni inventar), en directo, en un documento nuevo.
+    io.err(`Importado en ${r.ms} ms (${r.secciones.length} secciones). Repaso con IA en paralelo…\n`)
+    const md = readFileSync(r.path, 'utf8')
+    const cuerpo = md.replace(/^---[\s\S]*?\n---\n/, '')
+    const partes = cuerpo.split(/^(?=## )/m).map((x) => x.trim()).filter(Boolean)
+    const secciones = partes.map((x, i) => {
+      const m = x.match(/^## (.+)\n?/)
+      return { titulo: m ? m[1].trim() : i === 0 ? 'Introducción' : `Parte ${i + 1}`, fuente: m ? x.slice(m[0].length) : x }
+    }).filter((x) => x.fuente.trim())
+    const planFile = join(dirname(r.path), `.${basename(r.path, '.md')}.plan.json`)
+    writeFileSync(planFile, JSON.stringify({ tipo: 'documento', titulo: r.titulo, tema: opt.tema ?? 'buho', secciones }))
+    unlinkSync(r.path)
+    const code = await runCli(['generar', r.path, '--plan', planFile, ...(opt.modelo ? ['--modelo', opt.modelo] : []), '--paralelo', String(opt.paralelo ?? secciones.length), ...(author() ? ['--author', author()] : [])], io)
+    unlinkSync(planFile)
+    io.err(`Total, de ${basename(src)} al documento maquetado: ${((Date.now() - t0) / 1000).toFixed(1)} s\n`)
+    return code
+  }
+  case 'paginas': {
+    const r = await call('GET', '/v1/paginas' + qs({ path: file(0) }))
+    if (opt.json) { out(r); break }
+    print(`${r.total} ${r.kind === 'presentacion' ? 'diapositivas' : 'páginas'}`)
+    for (const p of r.pages) print(`${String(p.n).padStart(3)}  ${String(p.tokens).padStart(4)} tok  ${p.titles.length ? p.titles.join(' · ') : p.preview}`)
+    break
+  }
+  case 'pagina': {
+    const n = Number(args[1])
+    if (!Number.isInteger(n)) die('Uso: buho-docs pagina <archivo.md> <n> [--captura] [--width 900] [--out p.png]')
+    const r = await call('GET', '/v1/pagina' + qs({ path: file(0), n, captura: opt.captura ? 'true' : undefined, width: opt.width, out: typeof opt.out === 'string' ? R(opt.out) : undefined }))
+    if (opt.json) { out(r); break }
+    print(r.text)
+    io.err(`\n— página ${r.n} de ${r.total} · ${r.tokens} tokens${r.captura ? ` · captura: ${r.captura}` : ''}\n`)
     break
   }
   case 'mapa': {
@@ -626,18 +737,18 @@ switch (cmd) {
     const r = await call('GET', '/v1/leer' + qs({ path: file(0), seccion: opt.seccion, bloque: opt.bloque, desde: opt.desde, max: opt.max ?? opt['max-tokens'], ids: opt.ids ? 'true' : undefined }))
     if (opt.json) { out(r); break }
     print(r.text)
-    process.stderr.write(`\n— ${r.blocks} bloques · ${r.tokens} tokens${r.next ? ` · sigue en --desde ${r.next}` : ''}\n`)
+    io.err(`\n— ${r.blocks} bloques · ${r.tokens} tokens${r.next ? ` · sigue en --desde ${r.next}` : ''}\n`)
     break
   }
   case 'buscar': {
-    const folder = typeof opt.carpeta === 'string' ? resolve(opt.carpeta) : undefined
+    const folder = typeof opt.carpeta === 'string' ? R(opt.carpeta) : undefined
     const q = folder ? args[0] : args[1]
     if (!q) die('Uso: buho-docs buscar <archivo.md> "consulta"  ·  buho-docs buscar "consulta" --carpeta <carpeta>')
     const r = await call('GET', '/v1/buscar' + qs({ q, path: folder ? undefined : file(0), carpeta: folder, limite: opt.limite }))
     if (opt.json) { out(r); break }
     if (!r.hits.length) print(`Nada sobre «${q}» (${r.files} documento(s), ${r.ms} ms).`)
     for (const h of r.hits) print(`#${h.id.padEnd(8)} ${String(h.score).padStart(5)}  ${folder ? h.path.split(/[\\/]/).pop() + ' › ' : ''}${h.section || '(inicio)'} · l. ${h.line}\n          ${h.snippet}`)
-    process.stderr.write(`— ${r.hits.length} resultado(s) en ${r.files} documento(s) · ${r.ms} ms\n`)
+    io.err(`— ${r.hits.length} resultado(s) en ${r.files} documento(s) · ${r.ms} ms\n`)
     break
   }
   case 'bloque': {
@@ -656,13 +767,37 @@ switch (cmd) {
   case 'skill': {
     const p = skillPath()
     if (!p) die('No encuentro el SKILL.md (va junto al CLI, en la carpeta «cli» de la app).')
-    process.stdout.write(opt.path ? p + '\n' : readFileSync(p, 'utf8'))
+    io.out(opt.path ? p + '\n' : readFileSync(p, 'utf8'))
     break
   }
   default: {
     const help = readFileSync(new URL(import.meta.url), 'utf8').split('*/')[0].replace(/^#!.*\r?\n\/\*\*?\r?\n?/, '').replace(/^ \* ?/gm, '')
     const p = skillPath()
-    process.stdout.write(help + (p ? `\nGuía completa (sintaxis, bloques, diseños de diapositiva, ejemplos y reglas): ${p}\n` : '') + '\n')
-    process.exit(cmd && cmd !== 'help' ? 1 : 0)
+    io.out(help + (p ? `\nGuía completa (sintaxis, bloques, diseños de diapositiva, ejemplos y reglas): ${p}\n` : '') + '\n')
+    exitWith(cmd && cmd !== 'help' ? 1 : 0)
   }
+}
+  return 0
+}
+
+/** Fin del comando con un código de salida (sin cerrar el proceso: dentro de la app hay muchos a la vez). */
+export class CliExit extends Error {
+  constructor(code) {
+    super('exit ' + code)
+    this.code = code
+  }
+}
+
+/** Ejecución normal desde la terminal (Node o el ejecutable de la app en modo Node). */
+const isMain = process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url
+if (isMain) {
+  const io = { cwd: process.cwd(), env: process.env, stdin: process.stdin, out: (t) => process.stdout.write(t), err: (t) => process.stderr.write(t) }
+  runCli(process.argv.slice(2), io).then(
+    (code) => process.exit(code ?? 0),
+    (e) => {
+      if (e instanceof CliExit) process.exit(e.code)
+      process.stderr.write(String(e?.stack ?? e) + '\n')
+      process.exit(1)
+    }
+  )
 }
