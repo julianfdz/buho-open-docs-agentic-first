@@ -52,11 +52,11 @@ export function setModo(path: string, on: boolean): void {
 
 // ─── Propuestas ───────────────────────────────────────────────────────────────────────────────
 
-export function proponer(path: string, antes: string, despues: string, autor: string, resumen: string, comentario?: string): Propuesta | null {
+export function proponer(path: string, antes: string, despues: string, autor: string, resumen: string, comentario?: string, torneo?: { grupo: string; variante: number }): Propuesta | null {
   const ts = trozos(antes, despues)
   if (!ts.length) return null
   const e = leer(path)
-  const p: Propuesta = { id: nuevoId('p'), at: Date.now(), autor, resumen, trozos: ts, ...(comentario ? { comentario } : {}) }
+  const p: Propuesta = { id: nuevoId('p'), at: Date.now(), autor, resumen, trozos: ts, ...(comentario ? { comentario } : {}), ...(torneo ?? {}) }
   e.propuestas.push(p)
   escribir(e)
   return p

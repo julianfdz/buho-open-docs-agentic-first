@@ -153,7 +153,7 @@ export interface Who {
   comentario?: string
 }
 
-export async function applyChange(path: string, fn: (src: string) => string, who: Who): Promise<{ changed: boolean; content: string; path: string; propuesta?: string }> {
+export async function applyChange(path: string, fn: (src: string) => string, who: Who): Promise<{ changed: boolean; content: string; path: string; propuesta?: string; antes?: string }> {
   path = normPath(path)
   if (!isOpen(path)) openDoc(path, true)
   const before = await current(path)
@@ -162,7 +162,7 @@ export async function applyChange(path: string, fn: (src: string) => string, who
   // Modo revisión (o --proponer): el cambio de un agente queda como propuesta para aceptar o rechazar.
   if (who.kind === 'ai' && !who.directo && (who.proponer || revision.modoRevision(path))) {
     const p = revision.proponer(path, before, after, who.author, who.summary, who.comentario)
-    return { changed: false, content: before, path, propuesta: p?.id }
+    return { changed: false, content: before, path, propuesta: p?.id, antes: before }
   }
   writeFileSync(path, after)
   markOwnWrite(path)
@@ -178,7 +178,7 @@ export async function applyChange(path: string, fn: (src: string) => string, who
     } catch {
       /* comentario que ya no existe */
     }
-  return { changed: true, content: after, path }
+  return { changed: true, content: after, path, antes: before }
 }
 
 /** El archivo cambió en disco sin pasar por la app (otro programa o una IA editándolo directamente). */

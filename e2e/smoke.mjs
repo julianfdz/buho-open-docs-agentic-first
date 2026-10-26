@@ -25,6 +25,11 @@ delete env.ELECTRON_RUN_AS_NODE
 const run = promisify(execFile)
 const cli = async (...a) => (await run('node', [join(root, 'bin', 'buho-docs.mjs'), ...a], { env, encoding: 'utf8', timeout: 120000 })).stdout
 const cliJson = async (...a) => JSON.parse(await cli(...a, '--json'))
+const call = async (method, p, body) => {
+  const { url, token } = JSON.parse(readFileSync(join(out, 'data', 'api.json'), 'utf8'))
+  const r = await fetch(url + p, { method, headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined })
+  return r.json()
+}
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const text = (p) => readFileSync(p, 'utf8')
 let failed = false
@@ -364,6 +369,25 @@ try {
   const pp = await cliJson('export', deck, '--pptx', '--out', join(out, 'presentacion.pptx'))
   const pz = readFileSync(pp.file)
   check(pz.subarray(0, 2).toString() === 'PK' && pz.includes('ppt/slides/slide7.xml') && pp.slides === 7, `export --pptx: ${pp.slides} diapositivas (${(pp.bytes / 1024).toFixed(0)} KB)`)
+
+  // Comprobación visual: cada cambio dice qué páginas tocó; revisar da sus capturas; scan, todo y el mosaico.
+  const ch = await cliJson('replace', doc, 'Medir y ampliar', 'Medir y crecer', '--author', 'Claude')
+  check(Array.isArray(ch.paginas) && ch.paginas.length >= 1 && ch.totalPaginas >= 3, `Un cambio dice qué páginas tocó (${ch.paginas?.join(', ')} de ${ch.totalPaginas})`)
+  const rv = await cliJson('revisar', doc)
+  check(rv.paginas.length >= 1 && rv.paginas.every((x) => x.captura && existsSync(x.captura)), `revisar: capturas de las páginas cambiadas (${rv.paginas.map((x) => x.n).join(', ')})`)
+  const sc = await cliJson('scan', doc)
+  check(sc.total >= 3 && sc.mosaicos.length === 1 && existsSync(sc.mosaicos[0].file), `scan: ${sc.total} páginas, ${sc.problemas} problema(s) y mosaico`)
+  writeFileSync(join(out, 'mal.md'), ['---', 'tipo: documento', 'titulo: "Mal"', 'portada: false', '---', '', '## A', '', '![](no-existe.png)', '', '| a | b |', '|---|---|', '| ' + 'x'.repeat(400) + ' | y |', ''].join('\n'))
+  const sm = await cliJson('scan', join(out, 'mal.md'), '--sin-mosaico')
+  const tipos = sm.paginas.flatMap((x) => x.avisos.map((y) => y.tipo))
+  check(tipos.includes('imagen-rota') && tipos.includes('se-sale-por-la-derecha'), `scan detecta imagen rota y tabla que se sale (${tipos.join(', ')})`)
+
+  // Torneo (sin modelos): dos variantes de una sección como propuestas con captura; elegir una descarta la otra.
+  const v1 = await call('POST', '/v1/variante', { path: doc, seccion: 'La respuesta corta', content: 'Versión uno de la respuesta corta.', grupo: 'te2e', variante: 1, author: 'Claude' })
+  const v2 = await call('POST', '/v1/variante', { path: doc, seccion: 'La respuesta corta', content: 'Versión dos, más corta.', grupo: 'te2e', variante: 2, author: 'Claude' })
+  check(v1.propuesta && v2.propuesta && v1.capturas.length && existsSync(v1.capturas[0]), 'torneo: cada variante es una propuesta con la captura de cómo quedaría')
+  await cli('elegir', doc, v2.propuesta)
+  check(text(doc).includes('Versión dos, más corta.') && (await cliJson('propuestas', doc)).length === 0, 'elegir aplica la variante y descarta las demás')
 
   // Clic en la vista → el editor va a esa línea.
   await cli('open', doc)

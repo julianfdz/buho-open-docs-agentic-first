@@ -11,6 +11,38 @@ Búho Docs (de Buho Corps Systems) hace **documentos A4** y **presentaciones 16:
 - **Cambia solo lo necesario**: usa `section`, `slide`, `replace`, `meta` en vez de reescribir el documento entero. Es más rápido y el usuario ve exactamente qué has tocado.
 - **Firma siempre**: `--author TuNombre` (Claude, Codex, Copilot…).
 - El PDF se exporta con `buho-docs export`: es lo que el usuario envía.
+- **Comprueba siempre cómo se ve (§0)**: cada cambio te dice qué páginas ha tocado; mira sus capturas con `revisar` y arregla lo que esté mal. Antes de dar nada por terminado, `scan`. No entregues sin mirar.
+
+## 0. Comprobación visual: obligatoria, siempre
+
+Escribir a ciegas no vale: un bloque que no cabe deja media página en blanco, una tabla se sale, un título se queda solo al final. Por eso **cada cambio responde con las páginas que ha tocado y sus avisos visuales**:
+
+```
+Hecho · informe.md · 120 líneas
+Páginas tocadas: 4, 5 (de 9)
+  aviso pág. 4 línea 61: Página llena al 38 %: queda un hueco grande (…)
+Compruébalo: buho-docs revisar "informe.md"
+```
+
+El bucle, siempre:
+1. Cambias algo (`section`, `editar`, `batch`, `generar`…). Mira `Páginas tocadas` y los avisos.
+2. `buho-docs revisar <doc>`: capturas (PNG) y avisos de **las páginas cambiadas desde la última revisión** (o `revisar <doc> 3,5-6` para las que digas). **Abre las capturas y míralas**: las reglas detectan lo evidente (página poco llena, título al final, algo que se sale, bloque partido con un trocito, imagen rota, hueco sin rellenar, diapositiva que no cabe), pero lo feo, descuadrado o poco legible solo lo ves tú.
+3. Arreglas y vuelves a `revisar` hasta que esté limpio.
+4. Al acabar, **`buho-docs scan <doc>`**: revisa todas las páginas y saca un **mosaico** (todas las páginas en pequeño en una imagen, con su número) para ver el conjunto de un vistazo: ritmo, huecos, páginas desequilibradas. `--capturas` añade la de cada página.
+
+**Si orquestas varios agentes** (subagentes, sesiones de Claude, Codex…): cada uno revisa las páginas que ha tocado (`revisar`) y el agente principal hace el `scan` final y reparte los arreglos. Con `--json` todo trae `paginas`, `avisos` (`tipo`, `nivel`, `linea`, `mensaje`) y las rutas de las capturas.
+
+## 0.1 Torneo: varias versiones y eliges la mejor
+
+Para las partes que importan (la respuesta corta, el resumen ejecutivo, la portada de un deck, una sección floja), en vez de una versión pide varias a la vez y quédate con la mejor:
+
+```bash
+buho-docs torneo <doc> --seccion "Resumen" --n 3 [--pide "que convenza a un gerente escéptico"] [--modelos sonnet,opus]
+#  zona: --seccion "Título" | --bloque #b… | --hueco id | --diapositiva N
+#  cada variante sale con un enfoque distinto (directa, concisa, visual, con ejemplos…; --enfoques "a|b|c" para elegirlos)
+```
+
+En ~10 s tienes N propuestas, cada una con **la captura de cómo quedaría la página** (sin aplicarla) y sus avisos. **Mira las capturas** y elige con `buho-docs elegir <doc> <propuesta>`: se aplica esa y las demás se descartan. Si prefieres que decida el usuario, no elijas: le salen en el panel Revisión. Tras generar un documento, un torneo en las 2-3 secciones clave sube mucho la calidad.
 
 ## 1. Cómo invocar el CLI
 
@@ -56,7 +88,7 @@ Los ids salen del texto de cada bloque: no cambian al editar otras partes, pero 
 **Para ir rápido (lo que más tiempo cuesta son tus turnos, no la app):**
 - **Varios cambios = un solo `batch`.** Cinco erratas o retoques van en una lista JSON y en una llamada (y en una sola entrada del historial). Si uno falla, no se aplica ninguno.
 - **Documentos largos, por bloques**: crea el documento con las primeras secciones y añade el resto con `batch` (2-4 secciones por llamada). El usuario lo ve crecer en vez de esperar al final.
-- **Comprueba en texto, no con imágenes**: `check` dice páginas y avisos. No conviertas el PDF a imágenes. Si de verdad necesitas mirar algo visual, `snapshot --page N` da el PNG de esa página solo.
+- **Comprueba con `revisar` (§0), no convirtiendo el PDF**: da las capturas solo de las páginas que has tocado, ya hechas por la app.
 - **El PDF ya está hecho**: tras cada cambio la app lo prepara en segundo plano; `export` solo lo escribe (~0,1 s).
 - **Lo lento es escribir el texto, no la app.** Para documentos largos o presentaciones, `generar` con un plan: cada sección (o diapositiva) la escribe un modelo distinto **a la vez**, en directo, en su sitio. 12 secciones (~14 páginas) en ~25 s; 8 diapositivas en ~13 s. Tú haces el plan (índice + qué contar en cada parte) y luego repasas con `batch`.
 - **Reutiliza en vez de generar**: `bloques` + `insertar` mete piezas ya maquetadas (cajas, tarjetas, tablas, pasos…); texto que ya existe se pega con `write`/`append` sin volver a generarlo.
@@ -86,6 +118,10 @@ buho-docs comentarios <doc.md> [--abiertos]     # comentarios del usuario, con s
 buho-docs comentar <doc.md> "texto" --cita "…"  # (o --bloque #b… / --linea N)
 buho-docs responder <doc.md> <id> "…" [--resolver]
 buho-docs atender <doc.md> [--directo]          # un agente por bloque comentado, en paralelo
+buho-docs revisar <doc.md> [páginas]            # capturas y avisos de lo cambiado (§0)
+buho-docs scan <doc.md> [--capturas]            # todo el documento: avisos y mosaico
+buho-docs torneo <doc.md> --seccion "T" --n 3   # varias versiones a la vez (§0.1)
+buho-docs elegir <doc.md> <propuesta>           # quedarse con una variante
 buho-docs nuevo [nombre] [--plantilla id] [--tema id] [--file c.md]  # borrador sin guardar → imprime su ruta
 buho-docs guardar <borrador.md> <destino.md>    # guardar un borrador
 buho-docs history <doc.md> | diff <doc.md> [id] | restore <doc.md> <id>

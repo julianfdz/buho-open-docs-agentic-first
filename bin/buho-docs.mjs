@@ -20,6 +20,15 @@
  *   buho-docs responder <archivo.md> <id> "respuesta" [--resolver] · resolver <archivo.md> <id>
  *   buho-docs atender <archivo.md> [--directo] [--modelo sonnet]  # un agente por bloque comentado, a la vez
  *
+ *   Comprobación visual (siempre, tras cambiar algo):
+ *   (cada cambio dice qué páginas ha tocado y sus avisos visuales)
+ *   buho-docs revisar <archivo.md> [páginas] [--sin-capturas]  # capturas y avisos de lo cambiado desde la última revisión
+ *   buho-docs scan <archivo.md> [--capturas]        # todo el documento: avisos por página y mosaico (todas en una imagen)
+ *
+ *   Torneo (varias versiones de una zona a la vez; eliges la mejor):
+ *   buho-docs torneo <archivo.md> (--seccion "T" | --bloque #b… | --hueco id | --diapositiva N) [--n 3] [--modelos sonnet,opus] [--pide "…"]
+ *   buho-docs elegir <archivo.md> <propuesta>       # aplica esa variante y descarta las demás
+ *
  *   buho-docs open <archivo.md>                     (lo abre y lo enseña)
  *   buho-docs read <archivo.md> [--lines]           (contenido; --lines con números de línea)
  *   buho-docs outline <archivo.md>                  (títulos y diapositivas con su línea)
@@ -70,7 +79,7 @@ const portableDir = existsSync(join(here, '..', 'portable.txt')) ? join(here, '.
 const dataDir = process.env.BUHO_DATA_DIR || portableDir || join(process.env.APPDATA || join(process.env.HOME || '', '.config'), 'BuhoDocs')
 
 
-const FLAGS = new Set(['all', 'lines', 'json', 'no-launch', 'stdin', 'path', 'help', 'claude', 'quitar', 'ids', 'bloques', 'borrar', 'captura', 'ia', 'rapido', 'word', 'proponer', 'todas', 'abiertos', 'resolver', 'directo', 'pptx', 'powerpoint', 'office'])
+const FLAGS = new Set(['all', 'lines', 'json', 'no-launch', 'stdin', 'path', 'help', 'claude', 'quitar', 'ids', 'bloques', 'borrar', 'captura', 'ia', 'rapido', 'word', 'proponer', 'todas', 'abiertos', 'resolver', 'directo', 'pptx', 'powerpoint', 'office', 'cambiadas', 'capturas', 'sin-capturas', 'sin-mosaico'])
 function parseArgs(argv) {
   const pos = []
   const opt = {}
@@ -252,6 +261,15 @@ async function pipeClaude(input, id) {
 function changed(r) {
   if (opt.json) return out(r)
   print(r.changed === false ? r.message ?? 'Sin cambios' : `Hecho${r.replaced ? ` (${r.replaced} cambio${r.replaced > 1 ? 's' : ''})` : ''} · ${r.path} · ${r.lines ?? ''} líneas · el usuario lo ve en directo`)
+  avisosPaginas(r)
+}
+
+/** Qué páginas tocó un cambio y qué problemas visuales tienen: el agente debe comprobarlas. */
+function avisosPaginas(r) {
+  if (!r.paginas?.length) return
+  print(`Páginas tocadas: ${r.paginas.join(', ')}${r.totalPaginas ? ` (de ${r.totalPaginas})` : ''}`)
+  for (const a of r.avisos ?? []) print(`  ${a.nivel === 'error' ? 'ERROR' : 'aviso'} pág. ${a.pagina}${a.linea ? ` línea ${a.linea}` : ''}: ${a.mensaje}`)
+  if (r.changed) print(`Compruébalo: buho-docs revisar "${r.path}"   (capturas de esas páginas)`)
 }
 
 const when = (t) => new Date(t).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })
@@ -786,6 +804,100 @@ switch (cmd) {
       if (/auth|login|OAuth/i.test(fallos.join(' '))) io.err('Parece que la sesión de claude ha caducado: abre una terminal, ejecuta «claude» e inicia sesión.\n')
       exitWith(1)
     }
+    break
+  }
+  // ─── Comprobación visual ───
+  case 'revisar': {
+    const path = file(0)
+    const r = await call('POST', '/v1/revisar', { path, paginas: typeof opt.paginas === 'string' ? opt.paginas : args[1], lineas: opt.lineas, capturas: !opt['sin-capturas'], ancho: opt.ancho })
+    if (opt.json) { out(r); break }
+    if (!r.paginas.length) { print(`Nada que revisar (${r.motivo}). Para todo el documento: buho-docs scan "${path}"`); break }
+    print(`${r.paginas.length} página(s) ${r.motivo} de ${r.total} · ${r.problemas ? r.problemas + ' problema(s)' : 'sin problemas detectados'}`)
+    for (const pg of r.paginas) {
+      print(`  pág. ${pg.n} · llena al ${Math.round(pg.llenado * 100)} %${pg.titulos.length ? ' · ' + pg.titulos.slice(0, 2).join(' / ') : ''}${pg.captura ? '\n    captura: ' + pg.captura : ''}`)
+      for (const a of pg.avisos) print(`    ${a.nivel === 'error' ? 'ERROR' : 'aviso'}${a.linea ? ` línea ${a.linea}` : ''}: ${a.mensaje}`)
+    }
+    if (r.otrasConAvisos.length) print(`Otras páginas con avisos: ${r.otrasConAvisos.join(', ')} (buho-docs scan)`)
+    print('Mira las capturas: lo que no detectan las reglas (algo feo, descuadrado o que no se lee bien) también se arregla.')
+    break
+  }
+  case 'scan': {
+    const path = file(0)
+    const r = await call('POST', '/v1/scan', { path, mosaico: !opt['sin-mosaico'], capturas: !!opt.capturas, columnas: opt.columnas, ancho: opt.ancho })
+    if (opt.json) { out(r); break }
+    print(`${r.kind === 'presentacion' ? 'Presentación' : 'Documento'}: ${r.total} ${r.kind === 'presentacion' ? 'diapositivas' : 'páginas'} · ${r.limpio ? 'sin problemas detectados' : r.problemas + ' problema(s)'}`)
+    for (const pg of r.paginas) for (const a of pg.avisos) print(`  ${a.nivel === 'error' ? 'ERROR' : 'aviso'} pág. ${pg.n}${a.linea ? ` línea ${a.linea}` : ''}: ${a.mensaje}`)
+    for (const m of r.mosaicos) print(`Mosaico págs. ${m.desde}-${m.hasta}: ${m.file}`)
+    for (const c of r.capturas) print(`  pág. ${c.page}: ${c.file}`)
+    break
+  }
+  // ─── Torneo: varias versiones de una zona a la vez; quien lo pide elige ───
+  case 'torneo': {
+    const path = file(0)
+    const zona = { seccion: opt.seccion, bloque: opt.bloque, hueco: opt.hueco, diapositiva: opt.diapositiva }
+    const z = await call('POST', '/v1/zona', { path, ...zona })
+    const n = Math.min(8, Math.max(2, Number(opt.n) || 3))
+    const modelos = String(typeof opt.modelos === 'string' ? opt.modelos : typeof opt.modelo === 'string' ? opt.modelo : 'sonnet').split(',').map((x) => x.trim()).filter(Boolean)
+    const enfoques = typeof opt.enfoques === 'string' ? opt.enfoques.split('|') : ['', 'más concisa y directa: la mitad de palabras', 'más visual: con bloques de Búho Docs (tarjetas, cifras, pasos, columnas; gráfico solo con datos reales)', 'más concreta: ejemplos y casos prácticos', 'otra estructura y otro ángulo distinto', 'más persuasiva, orientada a la decisión']
+    const pide = typeof opt.pide === 'string' ? opt.pide : typeof opt.file === 'string' ? await content(9) : ''
+    const grupo = 't' + Date.now().toString(36)
+    const quien = author() ?? 'Claude'
+    const deck = z.kind === 'presentacion'
+    const que = z.zona === 'seccion' ? `el cuerpo de la sección «${z.seccion}»` : z.zona === 'bloque' ? `el bloque #${z.bloque}${z.seccion ? ` (sección ${z.seccion})` : ''}` : z.zona === 'hueco' ? `el hueco «${z.hueco}» (${z.pide})` : `la diapositiva ${z.diapositiva}`
+    io.err(`Torneo ${grupo}: ${n} versiones de ${que}, a la vez (${modelos.join(', ')})…\n`)
+    const t0 = Date.now()
+    const una = async (k) => {
+      const modelo = modelos[k % modelos.length]
+      const enfoque = (enfoques[k % enfoques.length] ?? '').trim()
+      const pedir = [
+        `Estás escribiendo en Búho Docs ${deck ? 'una presentación' : 'un documento'} titulado «${z.titulo}». Español de España.`,
+        `Escribe ${que}.`,
+        pide ? `Lo que se pide: ${pide}` : '',
+        enfoque ? `Enfoque de esta versión: ${enfoque}.` : '',
+        z.markdown ? 'Lo que hay ahora (reescríbelo, puedes cambiarlo entero):\n<<<\n' + z.markdown + '\n>>>' : '',
+        'Markdown de Búho Docs: ## y ### para títulos; bloques ::: caja | tarjetas N (cada ### una tarjeta, {icon=…}) | cifras N (- **8** texto) | pasos | columnas (+++ separa) | grafico barras (con una tabla) … :::.',
+        deck ? 'Es una diapositiva 16:9: un título ## corto y poco texto (de 2 a 4 tarjetas o de 3 a 5 viñetas). Puedes poner directivas al principio (@diseño: normal, @etiqueta: …).' : '',
+        z.zona === 'seccion' ? 'No repitas el título de la sección.' : '',
+        'No inventes cifras ni estudios. Devuelve SOLO el Markdown, sin explicaciones ni bloques de código alrededor.'
+      ].filter(Boolean).join('\n')
+      const t = Date.now()
+      const salida = await new Promise((ok) => {
+        const child = spawn('claude', ['-p', '--model', modelo, '--output-format', 'json'], { shell: process.platform === 'win32', stdio: ['pipe', 'pipe', 'pipe'] })
+        let o = ''
+        child.stdout.on('data', (d) => (o += d))
+        child.on('error', (e) => ok(JSON.stringify({ is_error: true, result: String(e) })))
+        child.on('close', () => ok(o))
+        child.stdin.end(pedir)
+      })
+      let res
+      try { res = JSON.parse(salida) } catch { res = { is_error: true, result: String(salida).slice(0, 160) || 'sin respuesta' } }
+      if (res.is_error) return { k, modelo, enfoque, error: String(res.result) }
+      const txt = String(res.result ?? '').trim().replace(/^```(?:markdown|md)?\s*\n([\s\S]*?)\n```$/, '$1')
+      const v = await call('POST', '/v1/variante', { path, ...zona, content: txt, grupo, variante: k + 1, enfoque: enfoque || modelo, author: `${quien} · ${modelo}` })
+      io.err(`  ✓ variante ${k + 1} · ${modelo}${enfoque ? ' · ' + enfoque.split(':')[0] : ''} · ${((Date.now() - t) / 1000).toFixed(1)} s\n`)
+      return { k, modelo, enfoque, chars: txt.length, ...v }
+    }
+    const rs = await Promise.all(Array.from({ length: n }, (_, k) => una(k)))
+    const total = ((Date.now() - t0) / 1000).toFixed(1)
+    if (opt.json) { out({ ok: true, grupo, segundos: Number(total), variantes: rs }); break }
+    print(`Torneo ${grupo} en ${total} s:`)
+    for (const v of rs) {
+      if (v.error) { print(`  v${v.k + 1} · ${v.modelo} · FALLÓ: ${v.error.slice(0, 120)}`); continue }
+      print(`  v${v.k + 1} · ${v.modelo}${v.enfoque ? ' · ' + v.enfoque : ''} · propuesta ${v.propuesta} · ${v.chars} caracteres · págs. ${(v.paginas ?? []).join(', ')}${v.avisos?.length ? ` · ${v.avisos.length} aviso(s)` : ''}`)
+      for (const c of v.capturas ?? []) print(`      captura: ${c}`)
+      for (const a of v.avisos ?? []) print(`      ${a.nivel === 'error' ? 'ERROR' : 'aviso'} pág. ${a.pagina}: ${a.mensaje}`)
+    }
+    print(`Mira las capturas y elige: buho-docs elegir "${path}" <propuesta>   (las demás variantes se descartan; o déjalas para que elija el usuario en el panel Revisión)`)
+    if (rs.some((v) => v.error && /auth|login|OAuth/i.test(v.error))) io.err('Parece que la sesión de claude ha caducado: abre una terminal, ejecuta «claude» e inicia sesión.\n')
+    break
+  }
+  case 'elegir': {
+    const path = file(0)
+    if (!args[1]) die('Uso: buho-docs elegir <archivo.md> <propuesta>   (de un torneo: las demás variantes se descartan)')
+    const r = await call('POST', '/v1/aceptar', { path, id: args[1], author: author() })
+    if (opt.json) { out(r); break }
+    print(`Elegida ${args[1]}${r.fallidos ? ' · ' + r.message : ''}`)
+    avisosPaginas(r)
     break
   }
   case 'bloques': {

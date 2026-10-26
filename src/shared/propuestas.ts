@@ -23,6 +23,9 @@ export interface Propuesta {
   trozos: Trozo[]
   /** Comentario que la originó, si viene de «atender comentarios». */
   comentario?: string
+  /** Torneo: las variantes de una misma zona comparten grupo; al elegir una, las demás se descartan. */
+  grupo?: string
+  variante?: number
 }
 
 export interface Comentario {

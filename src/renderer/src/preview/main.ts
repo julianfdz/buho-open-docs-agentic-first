@@ -4,6 +4,7 @@ import { varsDe, type Tema } from '@shared/temas'
 import { paginate } from './paginate'
 import { enableEditing, flushEdit, installEditing, releaseHeld, restoreCaret, runCommand, saveCaret, typingRecently } from './visual-edit'
 import buhoCss from './buho.css?raw'
+import { inspeccionar, montarMosaico, quitarMosaico } from './inspect'
 import './screen.css'
 
 /**
@@ -53,6 +54,9 @@ function marcar(container: HTMLElement, m: RenderRequest['marcas']): void {
 declare global {
   interface Window {
     buhoRender: (r: RenderRequest) => Promise<RenderResult>
+    buhoInspect: typeof inspeccionar
+    buhoMosaico: typeof montarMosaico
+    buhoQuitarMosaico: typeof quitarMosaico
   }
 }
 
@@ -336,6 +340,10 @@ async function renderNow(req: RenderRequest): Promise<RenderResult> {
 // Las peticiones se encadenan; si llegan varias mientras se pinta, solo cuenta la última.
 let busy: Promise<unknown> = Promise.resolve()
 let latest = 0
+window.buhoInspect = inspeccionar
+window.buhoMosaico = montarMosaico
+window.buhoQuitarMosaico = quitarMosaico
+
 window.buhoRender = (req) => {
   const n = ++latest
   const run = busy.then(async () => {

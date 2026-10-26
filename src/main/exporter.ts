@@ -180,6 +180,41 @@ export function pagesText(source: string, path: string): Promise<{ kind: string;
   })
 }
 
+/** Lo que se ve en cada página (líneas, llenado) y sus problemas visuales. */
+export function inspect(source: string, path: string): Promise<{ kind: string; pages: import('../renderer/src/preview/inspect').PaginaInfo[] }> {
+  return serial(async () => {
+    if (!(shown?.path === path && shown.source === source)) await render(source, path)
+    return (await win!.webContents.executeJavaScript('window.buhoInspect()')) as { kind: string; pages: import('../renderer/src/preview/inspect').PaginaInfo[] }
+  })
+}
+
+/**
+ * Mosaico: todas las páginas en pequeño, en imágenes de hasta `porImagen` páginas (con su número),
+ * para que una IA (o una persona) vea el documento entero de un vistazo.
+ */
+export function mosaico(source: string, path: string, cols = 4, porImagen = 12, ancho = 1300): Promise<{ desde: number; hasta: number; png: Buffer }[]> {
+  return serial(async () => {
+    const result = shown?.path === path && shown.source === source ? (cache.get(key(path))?.result ?? (await render(source, path))) : await render(source, path)
+    const out: { desde: number; hasta: number; png: Buffer }[] = []
+    const [w0, h0] = win!.getContentSize()
+    try {
+      for (let d = 1; d <= result.pages; d += porImagen) {
+        const h = Math.min(result.pages, d + porImagen - 1)
+        const rect = (await win!.webContents.executeJavaScript(`window.buhoMosaico(${d}, ${h}, ${cols}, ${ancho})`)) as { width: number; height: number } | null
+        if (!rect) break
+        win!.setContentSize(Math.max(w0, rect.width), Math.max(h0, rect.height))
+        await win!.webContents.executeJavaScript('new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))')
+        const img = await win!.webContents.capturePage({ x: 0, y: 0, width: rect.width, height: rect.height })
+        out.push({ desde: d, hasta: h, png: img.toPNG() })
+      }
+    } finally {
+      await win!.webContents.executeJavaScript('window.buhoQuitarMosaico()').catch(() => null)
+      win!.setContentSize(w0, h0)
+    }
+    return out
+  })
+}
+
 export function closeExporter(): void {
   if (win && !win.isDestroyed()) win.destroy()
 }

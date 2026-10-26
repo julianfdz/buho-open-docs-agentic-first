@@ -5,12 +5,12 @@ import { basename, dirname, extname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { DEFAULT_SETTINGS, type ChangeKind, type DocKind, type OpenDoc, type Settings } from '@shared/types'
-import { applyOps, editSection, editSlide, fillHole, holes, kindOf, type Op, outline, setIndex, parseValue, replaceText, setMeta, splitFront, splitSlides, titleOf, type SectionMode, type SlideMode } from '@shared/doc'
-import { unified } from '@shared/diff'
+import { applyOps, editSection, editSlide, fillHole, findSection, holes, kindOf, type Op, outline, setIndex, parseValue, replaceText, setMeta, splitFront, splitSlides, titleOf, type SectionMode, type SlideMode } from '@shared/doc'
+import { changedLines, unified } from '@shared/diff'
 import { CONTAINERS, LAYOUTS } from '@shared/syntax'
 import * as docs from './docs'
 import { historyBefore, historyEntry, listHistory, tagNextChange } from './history'
-import { checkDoc, closeExporter, exportPdf, pagesText, snapshot } from './exporter'
+import { checkDoc, closeExporter, exportPdf, inspect, mosaico, pagesText, snapshot } from './exporter'
 import { template } from './templates'
 import { editBlock, readClean, search, type BlockEditMode } from '@shared/index-ai'
 import { indexOf, mdFiles } from './indexcache'
@@ -20,7 +20,7 @@ import * as borradores from './borradores'
 import { exportDocx } from './exportar-word'
 import { exportPptx } from './exportar-pptx'
 import * as revision from './revision'
-import { aplicar, lineaActual, lineaCita } from '@shared/propuestas'
+import { aplicar, lineaActual, lineaCita, trozos } from '@shared/propuestas'
 import { crearTema, listarTemas, resolverTema, temasDir, type NuevoTema } from './temas'
 import { PLANTILLAS, desdePlantilla, plantillaById } from '@shared/plantillas'
 import { fechaHoy } from './templates'
@@ -134,6 +134,98 @@ function comentarioInfo(target: string, content: string, c: import('@shared/prop
   return { ...c, ahora: linea, bloque: b ? { id: b.id, line: b.line, end: b.end, seccion: b.path, markdown: md } : null }
 }
 
+/** Última versión revisada de cada documento (para «revisar --cambiadas»). */
+const revisados = new Map<string, string>()
+/** Línea (1) donde acaba la cabecera YAML (0 si no hay). */
+const finFront = (src: string): number => {
+  const m = src.match(/^---\r?\n[\s\S]*?\r?\n---\s*(\r?\n|$)/)
+  return m ? m[0].split(/\r?\n/).length - 1 : 0
+}
+function parsePaginas(spec: string, total: number): number[] {
+  if (/^(todas|all|\*)$/i.test(spec.trim())) return Array.from({ length: total }, (_, i) => i + 1)
+  const out = new Set<number>()
+  for (const part of spec.split(',')) {
+    const m = part.trim().match(/^(\d+)(?:\s*-\s*(\d+))?$/)
+    if (m) for (let i = Number(m[1]); i <= Number(m[2] ?? m[1]); i++) if (i >= 1 && i <= total) out.add(i)
+  }
+  return [...out].sort((a, b) => a - b)
+}
+/** Páginas donde caen esas líneas (1). Lo de la cabecera YAML va a la portada (o a todas si no hay). */
+function paginasDeLineas(pages: { n: number; portada: boolean; bloques: [number, number][] }[], lineas: number[], fm = 0): number[] {
+  const out = new Set<number>()
+  for (const l of lineas) {
+    if (l <= fm) {
+      const port = pages.find((x) => x.portada)
+      if (port) out.add(port.n)
+      continue
+    }
+    let hit = false
+    for (const pg of pages)
+      if (pg.bloques.some(([a, b]) => l >= a && l <= b)) {
+        out.add(pg.n)
+        hit = true
+      }
+    // Línea entre bloques (en blanco, o un bloque borrado): la página del bloque anterior más cercano.
+    if (!hit) {
+      let mejor: { n: number; d: number } | null = null
+      for (const pg of pages) for (const [a] of pg.bloques) if (a <= l && (!mejor || l - a < mejor.d)) mejor = { n: pg.n, d: l - a }
+      if (mejor) out.add(mejor.n)
+    }
+  }
+  return [...out].sort((a, b) => a - b)
+}
+/** Tras un cambio: qué páginas tocó y qué problemas visuales tienen ahora (para que el agente lo compruebe). */
+async function tocadas(target: string, antes: string, despues: string): Promise<object> {
+  try {
+    const info = await Promise.race([inspect(despues, target), new Promise<null>((r) => setTimeout(() => r(null), 6000))])
+    if (!info) return {}
+    const pags = paginasDeLineas(info.pages, changedLines(antes, despues).map((l) => l + 1), finFront(despues))
+    return { paginas: pags, totalPaginas: info.pages.length, avisos: pags.flatMap((n) => info.pages[n - 1].avisos.map((a) => ({ pagina: n, ...a }))) }
+  } catch {
+    return {}
+  }
+}
+async function paginasPropuesta(target: string, src: string, id: string): Promise<object> {
+  try {
+    const pr = revision.propuestas(target).find((x) => x.id === id)
+    if (!pr) return {}
+    const info = await inspect(src, target)
+    return { paginas: paginasDeLineas(info.pages, pr.trozos.flatMap((t) => Array.from({ length: Math.max(1, t.antes.length) }, (_, i) => (lineaActual(src, t) ?? t.linea) + i)), finFront(src)) }
+  } catch {
+    return {}
+  }
+}
+/** Una zona del documento (sección, bloque, hueco o diapositiva): su Markdown y cómo sustituirla. */
+function zonaDe(target: string, src: string, p: Record<string, unknown>): { markdown: string; info: object; aplicar: (src: string, nuevo: string) => string } {
+  const v = (k: string): string | undefined => (p[k] === undefined || p[k] === null || p[k] === '' ? undefined : String(p[k]))
+  if (v('seccion')) {
+    const h = v('seccion')!
+    const sec = findSection(src, h)
+    const L = src.split(/\r?\n/)
+    return { markdown: L.slice(sec.start + 1, sec.end).join('\n').trim(), info: { zona: 'seccion', seccion: L[sec.start].replace(/^#+\s*/, ''), linea: sec.start + 1 }, aplicar: (s2, n) => editSection(s2, h, n, 'body') }
+  }
+  if (v('bloque')) {
+    const id = v('bloque')!.replace(/^#/, '')
+    const b = indexOf(target, src).blocks.find((x) => x.id === id)
+    if (!b) throw new Error(`No existe el bloque #${id} (mira buho-docs mapa)`)
+    return { markdown: src.split(/\r?\n/).slice(b.line - 1, b.end).join('\n'), info: { zona: 'bloque', bloque: id, seccion: b.path, linea: b.line }, aplicar: (s2, n) => editBlock(s2, id, 'replace', n) }
+  }
+  if (v('hueco')) {
+    const id = v('hueco')!
+    const h = holes(src).find((x) => x.id === id)
+    if (!h) throw new Error(`No hay hueco «${id}» (mira buho-docs huecos)`)
+    return { markdown: '', info: { zona: 'hueco', hueco: id, pide: h.texto, linea: h.line }, aplicar: (s2, n) => fillHole(s2, id, n) }
+  }
+  if (v('diapositiva')) {
+    const n = Number(v('diapositiva'))
+    const sl = splitSlides(src)[n - 1]
+    if (!sl) throw new Error(`No existe la diapositiva ${n}`)
+    const L = src.split(/\r?\n/)
+    return { markdown: L.slice(sl.from, sl.end).join('\n').trim(), info: { zona: 'diapositiva', diapositiva: n, linea: sl.from + 1 }, aplicar: (s2, nuevo) => editSlide(s2, n, 'replace', nuevo) }
+  }
+  throw new Error('Di qué zona: --seccion "Título", --bloque #b…, --hueco id o --diapositiva N')
+}
+
 async function apiCall(method: string, p: Record<string, unknown>): Promise<unknown> {
   const s = (k: string): string | undefined => (p[k] === undefined || p[k] === null || p[k] === '' ? undefined : String(p[k]))
   const need = (k: string, what: string): string => {
@@ -143,8 +235,10 @@ async function apiCall(method: string, p: Record<string, unknown>): Promise<unkn
   }
   const path = (): string => docs.normPath(need('path', 'ruta del documento .md'))
   const ai = (summary: string): docs.Who => ({ kind: 'ai', author: s('author') ?? 'IA', summary: s('summary') ?? summary, proponer: p.proponer === true || p.proponer === 'true', comentario: s('comentario') })
-  const result = (r: { changed: boolean; content: string; path: string; propuesta?: string }): object => ({
+  const result = async (r: { changed: boolean; content: string; path: string; propuesta?: string; antes?: string }): Promise<object> => ({
     ok: true,
+    ...(r.changed && r.antes !== undefined ? await tocadas(r.path, r.antes, r.content) : {}),
+    ...(r.propuesta ? await paginasPropuesta(r.path, r.content, r.propuesta) : {}),
     ...(r.propuesta ? { propuesta: r.propuesta, message: `Propuesta ${r.propuesta} pendiente: el usuario la acepta o la rechaza (buho-docs propuestas)` } : {}),
     changed: r.changed,
     path: r.path,
@@ -216,7 +310,7 @@ async function apiCall(method: string, p: Record<string, unknown>): Promise<unkn
         },
         ai(`Cambiado «${find.length > 40 ? find.slice(0, 40) + '…' : find}» por «${repl.length > 40 ? repl.slice(0, 40) + '…' : repl}»`)
       )
-      return { ...result(r), replaced: count }
+      return { ...(await result(r)), replaced: count }
     }
     case 'section': {
       const heading = need('heading', 'título de la sección o #N')
@@ -295,7 +389,7 @@ async function apiCall(method: string, p: Record<string, unknown>): Promise<unkn
         },
         ai(ops.length === 1 ? 'Cambio' : `${ops.length} cambios`)
       )
-      return { ...result(r), applied: labels.length, labels }
+      return { ...(await result(r)), applied: labels.length, labels }
     }
     case 'streamStart': {
       const target = path()
@@ -408,6 +502,103 @@ async function apiCall(method: string, p: Record<string, unknown>): Promise<unkn
       const argv = Array.isArray(p.argv) ? p.argv.map(String) : []
       return runInApp(apiCall, argv, s('cwd') ?? process.cwd())
     }
+    // ─── Comprobación visual: revisar (páginas cambiadas o las que digas) y scan (todo) ───
+    case 'revisar': {
+      const target = path()
+      const src = await docs.current(target)
+      const info = await inspect(src, target)
+      const total = info.pages.length
+      let lista: number[]
+      let motivo: string
+      if (s('paginas')) {
+        lista = parsePaginas(s('paginas')!, total)
+        motivo = 'pedidas'
+      } else if (s('lineas')) {
+        const [a, b] = s('lineas')!.split('-').map(Number)
+        lista = paginasDeLineas(info.pages, Array.from({ length: (b || a) - a + 1 }, (_, i) => a + i))
+        motivo = `líneas ${s('lineas')}`
+      } else {
+        // Lo cambiado desde la última revisión (o, si no hubo, desde el cambio anterior del historial).
+        const ult = listHistory(target, 1)[0]
+        const base = revisados.get(target.toLowerCase()) ?? (ult ? historyBefore(target, ult.id) : null)
+        lista = base === null ? info.pages.map((x) => x.n) : paginasDeLineas(info.pages, changedLines(base, src).map((l) => l + 1), finFront(src))
+        motivo = revisados.has(target.toLowerCase()) ? 'cambiadas desde la última revisión' : 'cambiadas en el último cambio'
+      }
+      revisados.set(target.toLowerCase(), src)
+      const sinCapturas = p.capturas === false || p.capturas === 'false'
+      const shots = lista.length && !sinCapturas ? await snapshot(src, target, lista.join(','), Number(s('ancho')) || 900) : { images: [] }
+      const dir = join(tmpdir(), 'buho-docs', 'revisar')
+      mkdirSync(dir, { recursive: true })
+      const caps = new Map(shots.images.map((im) => {
+        const f = join(dir, `${basename(target, extname(target))}-p${im.page}.png`)
+        writeFileSync(f, im.png)
+        return [im.page, f] as const
+      }))
+      const paginas = lista.map((n) => {
+        const pg = info.pages[n - 1]
+        return { n, captura: caps.get(n), llenado: pg.llenado, titulos: pg.titulos, avisos: pg.avisos }
+      })
+      const otras = info.pages.filter((pg) => !lista.includes(pg.n) && pg.avisos.length).map((pg) => pg.n)
+      return { ok: true, path: target, kind: info.kind, total, motivo, paginas, problemas: paginas.reduce((k, x) => k + x.avisos.length, 0), otrasConAvisos: otras }
+    }
+    case 'scan': {
+      const target = path()
+      const src = await docs.current(target)
+      const info = await inspect(src, target)
+      revisados.set(target.toLowerCase(), src)
+      const dir = join(tmpdir(), 'buho-docs', 'scan')
+      mkdirSync(dir, { recursive: true })
+      const nombre = basename(target, extname(target))
+      const mos = p.mosaico === false || p.mosaico === 'false' ? [] : await mosaico(src, target, Number(s('columnas')) || (info.kind === 'presentacion' ? 3 : 4), Number(s('porImagen')) || 12)
+      const mosaicos = mos.map((m, k) => {
+        const f = join(dir, `${nombre}-mosaico${mos.length > 1 ? '-' + (k + 1) : ''}.png`)
+        writeFileSync(f, m.png)
+        return { desde: m.desde, hasta: m.hasta, file: f }
+      })
+      let capturas: { page: number; file: string }[] = []
+      if (p.capturas === true || p.capturas === 'true') {
+        const shots = await snapshot(src, target, 'todas', Number(s('ancho')) || 900)
+        capturas = shots.images.map((im) => {
+          const f = join(dir, `${nombre}-p${im.page}.png`)
+          writeFileSync(f, im.png)
+          return { page: im.page, file: f }
+        })
+      }
+      const conAvisos = info.pages.filter((pg) => pg.avisos.length).map((pg) => ({ n: pg.n, llenado: pg.llenado, avisos: pg.avisos }))
+      return { ok: true, path: target, kind: info.kind, total: info.pages.length, limpio: !conAvisos.length, problemas: conAvisos.reduce((k, x) => k + x.avisos.length, 0), paginas: conAvisos, llenado: info.pages.map((pg) => pg.llenado), mosaicos, capturas }
+    }
+    // ─── Torneo: varias versiones de una misma zona; el agente que lo pide elige ───
+    case 'zona': {
+      const target = path()
+      const src = await docs.current(target)
+      const z = zonaDe(target, src, p)
+      const f = splitFront(src)
+      return { ok: true, path: target, titulo: titleOf(src), kind: kindOf(f.meta), ...z.info, markdown: z.markdown }
+    }
+    case 'variante': {
+      const target = path()
+      const src = await docs.current(target)
+      const z = zonaDe(target, src, p)
+      const nuevo = z.aplicar(src, s('content') ?? '')
+      const grupo = need('grupo', 'id del torneo')
+      const k = Number(s('variante')) || 1
+      const pr = revision.proponer(target, src, nuevo, s('author') ?? 'IA', `Torneo ${grupo.slice(-4)} · variante ${k}${s('enfoque') ? ' (' + s('enfoque') + ')' : ''}`, undefined, { grupo, variante: k })
+      if (!pr) return { ok: true, igual: true, message: 'La variante es igual que lo que ya hay' }
+      // Captura de cómo quedaría (sin aplicarla): se pinta una copia con la variante.
+      const copia = join(dirname(target), `.${basename(target, extname(target))}.variante.md`)
+      const lineas = changedLines(src, nuevo).map((l) => l + 1)
+      const info = await inspect(nuevo, copia)
+      const pags = paginasDeLineas(info.pages, lineas, finFront(nuevo))
+      const dir = join(tmpdir(), 'buho-docs', 'torneo')
+      mkdirSync(dir, { recursive: true })
+      const shots = pags.length ? await snapshot(nuevo, copia, pags.join(','), Number(s('ancho')) || 900) : { images: [] }
+      const capturas = shots.images.map((im) => {
+        const f = join(dir, `${basename(target, extname(target))}-${grupo}-v${k}-p${im.page}.png`)
+        writeFileSync(f, im.png)
+        return f
+      })
+      return { ok: true, propuesta: pr.id, variante: k, paginas: pags, totalPaginas: info.pages.length, capturas, avisos: pags.flatMap((n) => info.pages[n - 1].avisos.map((a) => ({ pagina: n, ...a }))) }
+    }
     // ─── Revisión: propuestas (control de cambios) y comentarios ───
     case 'revision': {
       const target = path()
@@ -444,6 +635,9 @@ async function apiCall(method: string, p: Record<string, unknown>): Promise<unkn
         { kind: 'ai', author: lista.length === 1 ? lista[0].autor : 'IA', summary: lista.length === 1 ? `${lista[0].resumen} (propuesta aceptada)` : `${lista.length} propuestas aceptadas`, directo: true }
       )
       revision.quitarPropuestas(target, lista.map((x) => x.id))
+      // Torneo: elegida una variante, las demás de su grupo sobran.
+      const grupos = new Set(lista.map((x) => x.grupo).filter(Boolean))
+      if (grupos.size) revision.quitarPropuestas(target, revision.propuestas(target).filter((x) => x.grupo && grupos.has(x.grupo)).map((x) => x.id))
       for (const pr of lista)
         for (const cid of (pr.comentario ?? '').split(',').filter(Boolean))
           try {
@@ -451,7 +645,7 @@ async function apiCall(method: string, p: Record<string, unknown>): Promise<unkn
           } catch {
             /* comentario borrado */
           }
-      return { ...result(r), aceptadas: lista.length, fallidos, ...(fallidos ? { message: `${fallidos} trozo(s) no encajaban ya (el texto cambió después) y no se aplicaron` } : {}) }
+      return { ...(await result(r)), aceptadas: lista.length, fallidos, ...(fallidos ? { message: `${fallidos} trozo(s) no encajaban ya (el texto cambió después) y no se aplicaron` } : {}) }
     }
     case 'comentarios': {
       const target = path()

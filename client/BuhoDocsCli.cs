@@ -23,7 +23,7 @@ static class BuhoDocsCli
     static int Main(string[] args)
     {
         string cmd = args.Length > 0 ? args[0] : "";
-        bool local = cmd == "" || cmd == "help" || cmd == "--help" || cmd == "skill" || cmd == "stream" || cmd == "generar" || cmd == "atender";
+        bool local = cmd == "" || cmd == "help" || cmd == "--help" || cmd == "skill" || cmd == "stream" || cmd == "generar" || cmd == "atender" || cmd == "torneo";
         foreach (string a in args) if (a == "-" || a == "--stdin" || a == "--no-launch") local = true;
         if (!local)
         {

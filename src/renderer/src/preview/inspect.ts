@@ -1,0 +1,124 @@
+/**
+ * Inspección visual de lo que hay pintado: qué líneas del Markdown caen en cada página, cuánto se
+ * llena cada una y los problemas que se ven a simple vista (páginas medio vacías, un título solo al
+ * final de la página, algo que se sale por la derecha o por abajo, imágenes rotas, huecos sin
+ * rellenar, diapositivas que no caben). La usan los agentes para comprobar su trabajo (revisar, scan).
+ * También compone el mosaico: todas las páginas en pequeño en una imagen, para verlo de un vistazo.
+ */
+export interface AvisoVisual {
+  tipo: string
+  nivel: 'error' | 'aviso'
+  mensaje: string
+  linea?: number
+}
+export interface PaginaInfo {
+  n: number
+  portada: boolean
+  /** Bloques [línea, última línea] (1 = primera del archivo) que se ven en la página. */
+  bloques: [number, number][]
+  /** Cuánto se llena el cuerpo de la página (0–1). */
+  llenado: number
+  titulos: string[]
+  avisos: AvisoVisual[]
+}
+
+const paginas = (): HTMLElement[] => [...document.querySelectorAll<HTMLElement>('#root > .doc > .pg, #root > .deck > .slide')]
+const lineaDe = (el: Element | null): number | undefined => Number((el?.closest('[data-line]') as HTMLElement | null)?.dataset.line) || undefined
+
+export function inspeccionar(): { kind: string; pages: PaginaInfo[] } {
+  const deck = !!document.querySelector('#root > .deck')
+  const ps = paginas()
+  return {
+    kind: deck ? 'presentacion' : 'documento',
+    pages: ps.map((p, i) => {
+      const portada = p.classList.contains('pg-portada') || (deck && p.classList.contains('d-portada'))
+      const cuerpo = p.querySelector<HTMLElement>('.pg-cuerpo, .s-cuerpo, .s-main') ?? p
+      const bloques: [number, number][] = []
+      for (const el of p.querySelectorAll<HTMLElement>('[data-line]')) {
+        const l = Number(el.dataset.line)
+        if (l) bloques.push([l, Number(el.dataset.end) || l])
+      }
+      // Una diapositiva va de su línea hasta justo antes de la siguiente.
+      if (deck && Number(p.dataset.line)) bloques.push([Number(p.dataset.line), (Number(ps[i + 1]?.dataset.line) || 1e9) - 1])
+      const titulos = [...p.querySelectorAll('h1, h2, h3')].map((h) => (h.textContent ?? '').trim()).filter(Boolean).slice(0, 6)
+      const avisos: AvisoVisual[] = []
+      const cr = cuerpo.getBoundingClientRect()
+      const hijos = [...cuerpo.children].filter((c) => (c as HTMLElement).offsetParent !== null && !c.classList.contains('salto')) as HTMLElement[]
+      const fondo = hijos.reduce((m, c) => Math.max(m, c.getBoundingClientRect().bottom), cr.top)
+      const llenado = cr.height ? Math.max(0, Math.min(1.5, (fondo - cr.top) / cr.height)) : 0
+      const ultimo = ps.length === i + 1
+      const conSalto = !!cuerpo.lastElementChild?.classList.contains('salto') || !!p.nextElementSibling?.querySelector('.pg-cuerpo > :first-child.salto')
+
+      if (!deck && !portada) {
+        if (!ultimo && !conSalto && llenado < 0.45 && hijos.length)
+          avisos.push({ tipo: 'pagina-poco-llena', nivel: 'aviso', mensaje: `Página llena al ${Math.round(llenado * 100)} %: queda un hueco grande (seguramente el bloque siguiente no cabía y saltó de página; acórtalo, pártelo o reordena)`, linea: lineaDe(hijos[hijos.length - 1]) })
+        if (ultimo && llenado < 0.12 && ps.length > 1) avisos.push({ tipo: 'ultima-pagina-corta', nivel: 'aviso', mensaje: `La última página solo tiene unas líneas (${Math.round(llenado * 100)} %): recorta un poco antes o añade contenido`, linea: lineaDe(hijos[0]) })
+        const ult = hijos[hijos.length - 1]
+        if (!ultimo && ult && /^H[1-4]$/.test(ult.tagName)) avisos.push({ tipo: 'titulo-al-final', nivel: 'aviso', mensaje: `El título «${(ult.textContent ?? '').trim().slice(0, 50)}» se queda solo al final de la página`, linea: lineaDe(ult) })
+        // Un bloque partido entre páginas que deja solo un trocito en esta (o en la anterior).
+        const prim = hijos[0]
+        const prevCuerpo = ps[i - 1]?.querySelector<HTMLElement>('.pg-cuerpo')
+        const prevUlt = prevCuerpo?.lastElementChild as HTMLElement | null | undefined
+        if (prim && prevUlt && prim.dataset.line && prim.dataset.line === prevUlt.dataset.line) {
+          const hPrim = prim.getBoundingClientRect().height
+          const hPrev = prevUlt.getBoundingClientRect().height
+          if (Math.min(hPrim, hPrev) < cr.height * 0.1) avisos.push({ tipo: 'bloque-partido', nivel: 'aviso', mensaje: `Un bloque se parte entre las páginas ${i} y ${i + 1} y deja solo un trocito en la ${hPrim < hPrev ? 'segunda' : 'primera'} (acórtalo o pártelo tú)`, linea: lineaDe(prim) })
+        }
+        if (fondo > cr.bottom + 3) avisos.push({ tipo: 'se-sale-por-abajo', nivel: 'error', mensaje: 'El contenido se sale por abajo de la página (un bloque demasiado alto que no se puede partir)', linea: lineaDe(hijos.find((c) => c.getBoundingClientRect().bottom > cr.bottom + 3) ?? null) })
+      }
+      if (deck && p.classList.contains('overflow')) avisos.push({ tipo: 'no-cabe', nivel: 'error', mensaje: 'La diapositiva no cabe: sobra contenido (recorta o pártela en dos)', linea: Number(p.dataset.line) || undefined })
+      // Algo que se sale por la derecha (tablas anchas, enlaces largos, imágenes).
+      for (const el of cuerpo.querySelectorAll<HTMLElement>('table, pre, img, .bx, p, li, figure')) {
+        const r = el.getBoundingClientRect()
+        if (r.width && (r.right > cr.right + 4 || el.scrollWidth > el.clientWidth + 4)) {
+          avisos.push({ tipo: 'se-sale-por-la-derecha', nivel: 'error', mensaje: `${el.tagName === 'TABLE' ? 'Una tabla' : el.tagName === 'IMG' ? 'Una imagen' : 'Un bloque'} se sale por la derecha`, linea: lineaDe(el) })
+          break
+        }
+      }
+      for (const img of p.querySelectorAll('img'))
+        if (img.complete && img.naturalWidth === 0 && !img.closest('.pg-cab')) avisos.push({ tipo: 'imagen-rota', nivel: 'error', mensaje: `No se ve la imagen «${img.getAttribute('data-src') ?? img.getAttribute('src') ?? ''}»`, linea: lineaDe(img) })
+      for (const h of p.querySelectorAll<HTMLElement>('.bx-hueco')) avisos.push({ tipo: 'hueco-sin-rellenar', nivel: 'aviso', mensaje: `Hueco «${h.dataset.hueco ?? ''}» sin rellenar`, linea: lineaDe(h) })
+      return { n: i + 1, portada, bloques, llenado: Math.round(llenado * 100) / 100, titulos, avisos }
+    })
+  }
+}
+
+/**
+ * Mosaico: copias reducidas de las páginas `desde`…`hasta` en una rejilla, con su número, encima de
+ * todo. Devuelve el rectángulo que fotografiar; `quitarMosaico()` lo deshace.
+ */
+export function montarMosaico(desde: number, hasta: number, cols: number, anchoTotal: number): { width: number; height: number } | null {
+  quitarMosaico()
+  const ps = paginas().slice(desde - 1, hasta)
+  if (!ps.length) return null
+  const gap = 10
+  const w0 = ps[0].offsetWidth
+  const h0 = ps[0].offsetHeight
+  const tw = Math.floor((anchoTotal - gap * (cols + 1)) / cols)
+  const z = tw / w0
+  const th = Math.ceil(h0 * z)
+  const filas = Math.ceil(ps.length / cols)
+  const cont = document.createElement('div')
+  cont.id = 'mosaico'
+  cont.style.cssText = `position:fixed;left:0;top:0;z-index:999999;background:#c9d1db;width:${anchoTotal}px;height:${filas * (th + gap + 18) + gap}px;font:600 13px Calibri,sans-serif;color:#1c2a3b`
+  ps.forEach((p, k) => {
+    const x = gap + (k % cols) * (tw + gap)
+    const y = gap + Math.floor(k / cols) * (th + gap + 18)
+    const etiqueta = document.createElement('div')
+    etiqueta.textContent = String(desde + k)
+    etiqueta.style.cssText = `position:absolute;left:${x}px;top:${y}px;height:16px`
+    const marco = document.createElement('div')
+    marco.style.cssText = `position:absolute;left:${x}px;top:${y + 18}px;width:${tw}px;height:${th}px;overflow:hidden;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.25)`
+    const copia = p.cloneNode(true) as HTMLElement
+    copia.style.cssText += `;margin:0;transform:scale(${z});transform-origin:0 0;width:${w0}px;height:${h0}px`
+    marco.appendChild(copia)
+    cont.append(etiqueta, marco)
+  })
+  document.body.appendChild(cont)
+  scrollTo(0, 0)
+  return { width: anchoTotal, height: filas * (th + gap + 18) + gap }
+}
+
+export function quitarMosaico(): void {
+  document.getElementById('mosaico')?.remove()
+}
