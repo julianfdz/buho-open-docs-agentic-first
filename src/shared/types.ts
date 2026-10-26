@@ -125,10 +125,8 @@ export interface BuhoDocsApi {
   /** Guarda lo escrito en la app (queda en el historial como tuyo). */
   save(path: string, content: string): Promise<{ ok: boolean; error?: string }>
   exportPdf(path: string, choose: boolean): Promise<{ ok: boolean; file?: string; pages?: number; error?: string }>
-  /** Word (documentos) o PowerPoint (presentaciones); choose: elegir dónde, o 'drive' para Google Drive. */
-  exportWord(path: string, choose: boolean | 'drive'): Promise<{ ok: boolean; file?: string; bytes?: number; slides?: number; error?: string }>
-  /** Carpeta de Búho Docs en Google Drive para escritorio, si está instalado. */
-  drive(): Promise<string | null>
+  /** Word (documentos) o PowerPoint (presentaciones); choose: elegir dónde. */
+  exportWord(path: string, choose: boolean): Promise<{ ok: boolean; file?: string; bytes?: number; slides?: number; error?: string }>
   /** Revisión: propuestas y comentarios (revision, aceptar, rechazar, comentar, responder, resolver). */
   revision(method: string, params: Record<string, unknown>): Promise<any> // eslint-disable-line @typescript-eslint/no-explicit-any
   /** Un agente por bloque comentado, a la vez; devuelve cuando acaban todos. */

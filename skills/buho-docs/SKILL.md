@@ -30,7 +30,7 @@ Búho Docs (de Buho Corps Systems) hace **documentos A4** y **presentaciones 16:
 
 **Importar algo que ya existe (Word, PDF, HTML, texto):** `buho-docs importar archivo.docx [--salida doc.md] [--tema id]`. Word sale bien al momento (títulos, listas, tablas, negritas, imágenes). Los PDF se maquetan con IA en paralelo (sus tablas no se recuperan con reglas); `--rapido` solo convierte. Por defecto se guarda en Documentos\Buho Docs: el original no se toca.
 
-**Exportar a Office y a Google:** `buho-docs export doc.md --word` (.docx con estilos de título reales, listas, tablas, cajas, tarjetas, cifras, índice, portada, cabecera y pie) y `buho-docs export deck.md --pptx` (PowerPoint con cada diapositiva en su diseño, formas, tablas, notas del orador). Los `::: grafico` van como gráficos nativos, editables. `--drive` lo deja en Google Drive para escritorio (se sube solo; en drive.google.com se abre con Documentos o Presentaciones de Google). Lo que se envía tal cual sigue siendo el PDF.
+**Exportar a Office y a Google:** `buho-docs export doc.md --word` (.docx con estilos de título reales, listas, tablas, cajas, tarjetas, cifras, índice, portada, cabecera y pie) y `buho-docs export deck.md --pptx` (PowerPoint con cada diapositiva en su diseño, formas, tablas, notas del orador). Los `::: grafico` van como gráficos nativos, editables. Lo que se envía tal cual sigue siendo el PDF.
 
 **Revisión (cuando el usuario quiere aprobar los cambios):** añade `--proponer` a cualquier cambio (section, replace, editar, batch…) y queda como propuesta que el usuario acepta o rechaza en el panel Revisión de la app, sin tocar el archivo. Con `buho-docs revision doc.md si` todo cambio de un agente llega así. El usuario también deja comentarios en la página («quita esto», «mete algo así»): léelos con `buho-docs comentarios doc.md --abiertos` (cada uno trae su bloque `#id` y su Markdown), haz el cambio (mejor con `--proponer --comentario <id>`) y `buho-docs responder doc.md <id> "Hecho: …" --resolver`. O todos de golpe: `buho-docs atender doc.md` lanza un agente por bloque comentado, a la vez, y deja propuestas (`--directo` para escribirlas).
 
@@ -79,7 +79,6 @@ buho-docs check <doc.md>                        # páginas/diapositivas y avisos
 buho-docs export <doc.md> [--out archivo.pdf]   # PDF (por defecto junto al .md)
 buho-docs export <doc.md> --word [--out x.docx]  # Word editable (.docx)
 buho-docs export <deck.md> --pptx               # PowerPoint editable (.pptx)
-buho-docs export <doc.md> --drive               # Word/PowerPoint en Google Drive
 buho-docs <cambio> … --proponer                 # propuesta en vez de escribir (el usuario acepta o rechaza)
 buho-docs revision <doc.md> [si|no]             # modo revisión: todo cambio de la IA llega como propuesta
 buho-docs propuestas <doc.md> · aceptar|rechazar <doc.md> <id|todas>
@@ -286,6 +285,5 @@ Informes en minutos.
 
 - Escribe en español de España, claro y directo, como Búho: frases cortas, negritas para lo importante, nada de relleno.
 - No inventes cifras ni estudios: si pones datos, que sean del usuario o con fuente en un `::: nota`.
-- Documentos de cara a cliente: sin precios internos ni enlaces privados salvo que el usuario lo pida.
 - Tras un cambio grande, `buho-docs show <doc> --line N` lleva al usuario a lo que has hecho.
 - Para volver atrás: `history` → `restore <id>` (la vuelta también queda en el historial).

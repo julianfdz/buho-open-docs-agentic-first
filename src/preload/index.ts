@@ -34,7 +34,6 @@ const api: BuhoDocsApi = {
   save: (path, content) => ipcRenderer.invoke('save', path, content),
   exportPdf: (path, choose) => ipcRenderer.invoke('exportPdf', path, choose),
   exportWord: (path, choose) => ipcRenderer.invoke('exportWord', path, choose),
-  drive: () => ipcRenderer.invoke('drive'),
   revision: (method, params) => ipcRenderer.invoke('revision', method, params),
   atender: (path) => ipcRenderer.invoke('atender', path),
   onRevision: (cb) => on('revision', cb),

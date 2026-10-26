@@ -9,7 +9,6 @@ import {
   FileText,
   FolderOpen,
   History,
-  CloudUpload,
   MessagesSquare,
   Moon,
   PanelLeft,
@@ -62,10 +61,6 @@ export default function App(): React.JSX.Element {
   const [histRefresh, setHistRefresh] = useState(0)
   // Revisión: comentarios y propuestas del documento activo; modo «comentar» en la página.
   const [rev, setRev] = useState<RevEstado | null>(null)
-  const [driveDir, setDriveDir] = useState<string | null>(null)
-  useEffect(() => {
-    void window.buho.drive().then(setDriveDir)
-  }, [])
   const [revTick, setRevTick] = useState(0)
   const [comentando, setComentando] = useState(false)
   const [revDraft, setRevDraft] = useState<{ line: number; cita: string; seleccion?: string; nonce: number } | null>(null)
@@ -443,7 +438,7 @@ export default function App(): React.JSX.Element {
     if (!rest.length) void window.buho.recent().then(setRecent)
   }
   doExportRef.current = () => doExport()
-  const doExport = async (choose = false): Promise<void> => {
+  const doExport = async (choose = true): Promise<void> => {
     if (!tab) return
     await saveNow(tab.path)
     setExporting(true)
@@ -455,7 +450,7 @@ export default function App(): React.JSX.Element {
     } else if (r.error) say(`No se pudo exportar: ${r.error}`, { ms: 8000 })
   }
 
-  const doWord = async (choose: boolean | 'drive' = false): Promise<void> => {
+  const doWord = async (choose = true): Promise<void> => {
     if (!tab) return
     await saveNow(tab.path, true)
     setExporting(true)
@@ -464,8 +459,7 @@ export default function App(): React.JSX.Element {
     if (r.ok && r.file) {
       const file = r.file
       const que = file.endsWith('.pptx') ? 'PowerPoint' : 'Word'
-      if (choose === 'drive') say(`En Google Drive · ${file.split(/[\\/]/).pop()} (se sube solo)`, { action: { label: 'Abrir Drive', run: () => void window.buho.openExternal('https://drive.google.com/drive/recent') }, ms: 9000 })
-      else say(`${que} listo · ${file.split(/[\\/]/).pop()}`, { action: { label: 'Abrir', run: () => void window.buho.openExternal(file) }, ms: 8000 })
+      say(`${que} listo · ${file.split(/[\\/]/).pop()}`, { action: { label: 'Abrir', run: () => void window.buho.openExternal(file) }, ms: 8000 })
     } else if (r.error) say(`No se pudo exportar: ${r.error}`, { ms: 8000 })
   }
 
@@ -552,15 +546,10 @@ export default function App(): React.JSX.Element {
               <button className={`icon ${panel === 'history' ? 'on' : ''}`} title="Historial (Ctrl+Shift+H)" onClick={() => setPanel(panel === 'history' ? null : 'history')}>
                 <History size={16} />
               </button>
-              <button className="btn" onClick={() => void doWord()} disabled={exporting} title={`Exportar a ${isDeck ? 'PowerPoint (.pptx)' : 'Word (.docx)'}, editable. Clic derecho: elegir dónde`} onContextMenu={() => void doWord(true)}>
+              <button className="btn" onClick={() => void doWord()} disabled={exporting} title={`Exportar a ${isDeck ? 'PowerPoint (.pptx)' : 'Word (.docx)'}, editable: eliges dónde`}>
                 {isDeck ? <Presentation size={15} /> : <FileText size={15} />} {isDeck ? 'PowerPoint' : 'Word'}
               </button>
-              {driveDir && (
-                <button className="icon" onClick={() => void doWord('drive')} disabled={exporting} title={`Guardar en Google Drive (${driveDir}) como ${isDeck ? 'PowerPoint' : 'Word'}: se sube solo y se abre con Google ${isDeck ? 'Presentaciones' : 'Documentos'}`}>
-                  <CloudUpload size={16} />
-                </button>
-              )}
-              <button className="btn primary" onClick={() => void doExport()} disabled={exporting} title="Exportar a PDF junto al documento (Ctrl+P). Clic derecho: elegir dónde" onContextMenu={() => void doExport(true)}>
+              <button className="btn primary" onClick={() => void doExport()} disabled={exporting} title="Exportar a PDF: eliges dónde (Ctrl+P)">
                 <FileDown size={15} /> {exporting ? 'Exportando…' : 'PDF'}
               </button>
             </>

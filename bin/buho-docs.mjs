@@ -29,7 +29,7 @@
  *   buho-docs slide <archivo.md> <n> --file diapo.md [--mode replace|insert|delete|move] [--to N]
  *   buho-docs append <archivo.md> --file mas.md
  *   buho-docs meta <archivo.md> <campo> ["valor"]   (cabecera; sin valor lo quita)
- *   buho-docs export <archivo.md> [--out archivo.pdf] [--word|--pptx] [--drive]   # Word / PowerPoint editables; --drive: a Google Drive
+ *   buho-docs export <archivo.md> [--out archivo.pdf] [--word|--pptx]   # Word / PowerPoint editables
  *   buho-docs check <archivo.md>                    (páginas y avisos: diapositivas que no caben, imágenes…)
  *   buho-docs history <archivo.md> [--limit 20] | diff <archivo.md> [id] | restore <archivo.md> <id>
  *   buho-docs show <archivo.md> [--line N]          (lo enseña en la app, en esa línea)
@@ -70,7 +70,7 @@ const portableDir = existsSync(join(here, '..', 'portable.txt')) ? join(here, '.
 const dataDir = process.env.BUHO_DATA_DIR || portableDir || join(process.env.APPDATA || join(process.env.HOME || '', '.config'), 'BuhoDocs')
 
 
-const FLAGS = new Set(['all', 'lines', 'json', 'no-launch', 'stdin', 'path', 'help', 'claude', 'quitar', 'ids', 'bloques', 'borrar', 'captura', 'ia', 'rapido', 'word', 'proponer', 'todas', 'abiertos', 'resolver', 'directo', 'pptx', 'powerpoint', 'office', 'drive'])
+const FLAGS = new Set(['all', 'lines', 'json', 'no-launch', 'stdin', 'path', 'help', 'claude', 'quitar', 'ids', 'bloques', 'borrar', 'captura', 'ia', 'rapido', 'word', 'proponer', 'todas', 'abiertos', 'resolver', 'directo', 'pptx', 'powerpoint', 'office'])
 function parseArgs(argv) {
   const pos = []
   const opt = {}
@@ -363,11 +363,11 @@ switch (cmd) {
     const path = file(0)
     const pp = opt.pptx || opt.powerpoint || /^(pptx|powerpoint)$/i.test(String(opt.formato ?? '')) || /\.pptx$/i.test(String(opt.out ?? ''))
     const word = opt.word || /^(docx|word)$/i.test(String(opt.formato ?? '')) || /\.docx$/i.test(String(opt.out ?? ''))
-    const office = pp || word || opt.office || opt.drive
+    const office = pp || word || opt.office
     io.err(pp ? 'Exportando a PowerPoint…\n' : word ? 'Exportando a Word…\n' : office ? 'Exportando…\n' : 'Exportando a PDF…\n')
-    const r = await call('POST', '/v1/export', { path, out: typeof opt.out === 'string' ? R(opt.out) : undefined, formato: pp ? 'pptx' : word ? 'docx' : office ? 'office' : undefined, drive: !!opt.drive })
+    const r = await call('POST', '/v1/export', { path, out: typeof opt.out === 'string' ? R(opt.out) : undefined, formato: pp ? 'pptx' : word ? 'docx' : office ? 'office' : undefined })
     if (opt.json) { out(r); break }
-    if (office) { print(`${r.file.endsWith('.pptx') ? 'PowerPoint' : 'Word'}: ${r.file} · ${(r.bytes / 1024).toFixed(0)} KB${r.slides ? ` · ${r.slides} diapositivas` : ''}${r.drive ? '\n' + r.message : ''}`); break }
+    if (office) { print(`${r.file.endsWith('.pptx') ? 'PowerPoint' : 'Word'}: ${r.file} · ${(r.bytes / 1024).toFixed(0)} KB${r.slides ? ` · ${r.slides} diapositivas` : ''}`); break }
     print(`PDF: ${r.file} · ${r.pages} ${r.kind === 'presentacion' ? 'diapositivas' : 'páginas'} · ${(r.bytes / 1024).toFixed(0)} KB`)
     for (const w of r.warnings) print(`  ${w.level === 'error' ? 'ERROR' : 'aviso'}${w.slide ? ` diap. ${w.slide}` : ''}${w.line ? ` línea ${w.line}` : ''}: ${w.message}`)
     break

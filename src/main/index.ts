@@ -104,13 +104,6 @@ const defaultOut = (path: string, ext: string): string => {
   return join(dir, basename(path, extname(path)) + ext)
 }
 const defaultPdf = (path: string): string => defaultOut(path, '.pdf')
-/** Google Drive para escritorio («Mi unidad» o «My Drive» en alguna unidad): lo que se guarda ahí se sube solo. */
-function carpetaDrive(): string | null {
-  for (const l of 'DEFGHIJKLMNOPQRSTUVWXYZ')
-    for (const n of ['Mi unidad', 'My Drive'])
-      if (existsSync(`${l}:\\${n}`)) return join(`${l}:\\${n}`, 'Buho Docs')
-  return null
-}
 /** Exportar a Office: Word (.docx) para documentos, PowerPoint (.pptx) para presentaciones. Editables. */
 async function exportWord(path: string, out: string): Promise<{ ok: true; file: string; bytes: number; kind: string; slides?: number }> {
   const src = await docs.current(path)
@@ -126,17 +119,11 @@ async function exportWord(path: string, out: string): Promise<{ ok: true; file: 
   }
   return { ok: true, file: out, bytes: buffer.length, kind: kindOf(splitFront(src).meta), ...('slides' in r ? { slides: r.slides } : {}) }
 }
-/** Ruta de salida de Office: junto al .md (o donde diga), en Drive si se pide; .pptx para presentaciones. */
-async function salidaOffice(path: string, formato: string | undefined, out: string | undefined, drive: boolean): Promise<string> {
+/** Ruta de salida de Office: junto al .md (o donde diga); .pptx para presentaciones. */
+async function salidaOffice(path: string, formato: string | undefined, out: string | undefined): Promise<string> {
   const deck = kindOf(splitFront(await docs.current(path)).meta) === 'presentacion'
   const ext = /^(pptx|powerpoint|ppt)$/i.test(formato ?? '') || /\.pptx$/i.test(out ?? '') ? '.pptx' : /^(docx|word)$/i.test(formato ?? '') || /\.docx$/i.test(out ?? '') ? '.docx' : deck ? '.pptx' : '.docx'
-  if (out) return out
-  if (drive) {
-    const d = carpetaDrive()
-    if (!d) throw new Error('No encuentro Google Drive para escritorio (una unidad con «Mi unidad»). Instálalo o usa --out')
-    return join(d, basename(path, extname(path)) + ext)
-  }
-  return defaultOut(path, ext)
+  return out ?? defaultOut(path, ext)
 }
 
 /** Un comentario con dónde está ahora: línea, bloque (#id, para «editar») y su Markdown. */
@@ -254,11 +241,7 @@ async function apiCall(method: string, p: Record<string, unknown>): Promise<unkn
     }
     case 'export': {
       const target = path()
-      const drive = p.drive === true || p.drive === 'true'
-      if (drive || /^(docx|word|pptx|powerpoint|ppt|office)$/i.test(s('formato') ?? '') || /\.(docx|pptx)$/i.test(s('out') ?? '')) {
-        const r = await exportWord(target, await salidaOffice(target, s('formato'), s('out') ? resolve(s('out')!) : undefined, drive))
-        return drive ? { ...r, drive: true, message: 'Guardado en Google Drive: se sube solo. En drive.google.com se abre con Documentos o Presentaciones de Google.' } : r
-      }
+      if (/^(docx|word|pptx|powerpoint|ppt|office)$/i.test(s('formato') ?? '') || /\.(docx|pptx)$/i.test(s('out') ?? '')) return exportWord(target, await salidaOffice(target, s('formato'), s('out') ? resolve(s('out')!) : undefined))
       const out = s('out') ? resolve(s('out')!) : defaultPdf(target)
       const r = await exportPdf(await docs.current(target), target, out)
       return { ok: true, ...r }
@@ -838,12 +821,11 @@ function registerIpc(): void {
       return { ok: false, error: (e as Error).message }
     }
   })
-  ipcMain.handle('drive', () => carpetaDrive())
-  ipcMain.handle('exportWord', async (_e, path: string, choose: boolean | 'drive') => {
+  ipcMain.handle('exportWord', async (_e, path: string, choose: boolean) => {
     try {
-      let out = await salidaOffice(path, undefined, undefined, choose === 'drive')
+      let out = await salidaOffice(path, undefined, undefined)
       const deck = out.endsWith('.pptx')
-      if (choose === true) {
+      if (choose) {
         const r = await dialog.showSaveDialog(win!, { title: deck ? 'Exportar a PowerPoint' : 'Exportar a Word', defaultPath: out, filters: [deck ? { name: 'Presentación de PowerPoint', extensions: ['pptx'] } : { name: 'Documento de Word', extensions: ['docx'] }] })
         if (r.canceled || !r.filePath) return { ok: false }
         out = r.filePath
