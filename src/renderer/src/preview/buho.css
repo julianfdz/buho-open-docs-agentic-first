@@ -1315,7 +1315,8 @@ p.banda > img:only-child {
   width: 100%;
   height: 46mm;
   object-fit: cover;
-  object-position: center 40%;
+  /* las caras suelen estar en el tercio de arriba: el recorte se centra ahí */
+  object-position: center 22%;
   border-radius: 6px;
   display: block;
 }
@@ -1339,4 +1340,12 @@ p.lateral > img:only-child {
 }
 .deck p.banda > img:only-child {
   height: 200px;
+}
+
+/* Ajustar el recorte de la banda: {.banda .abajo} o {.banda .centro} */
+p.banda.abajo > img:only-child {
+  object-position: center 80%;
+}
+p.banda.centro > img:only-child {
+  object-position: center 50%;
 }
