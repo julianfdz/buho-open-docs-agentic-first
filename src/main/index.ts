@@ -158,7 +158,10 @@ async function ponerImagen(target: string, datos: Buffer, ext: string, nombre: s
   }
   writeFileSync(file, datos)
   const rel = 'imagenes/' + basename(file)
-  const ancho = s('ancho') ? `{width=${s('ancho')!.replace(/%?$/, '%')}}` : ''
+  // Estilo: «banda» (franja panorámica bajo el título, por defecto), «lateral» (pequeña a la derecha) o
+  // «completa» (a su tamaño o al ancho que se diga).
+  const estilo = s('estilo') ?? (s('ancho') ? 'completa' : 'banda')
+  const ancho = estilo === 'banda' ? '{.banda}' : estilo === 'lateral' ? '{.lateral}' : s('ancho') ? `{width=${s('ancho')!.replace(/%?$/, '%')}}` : ''
   const alt = (s('alt') ?? nombre).replace(/[[\]]/g, '')
   const md = `![${alt}](${rel})${ancho}${credito ? `\n\n::: nota\n${credito}\n:::` : ''}`
   const r = await docs.applyChange(
@@ -167,12 +170,14 @@ async function ponerImagen(target: string, datos: Buffer, ext: string, nombre: s
       if (s('hueco')) return fillHole(src, s('hueco')!, md)
       if (s('bloque')) return editBlock(src, s('bloque')!.replace(/^#/, ''), 'after', md)
       if (s('seccion')) {
-        // Tras el primer párrafo de la sección (no al final, donde se pierde).
+        // En banda, justo bajo el título; si no, tras el primer párrafo (no al final, donde se pierde).
         const sec = findSection(src, s('seccion')!)
         const L = src.split(/\r?\n/)
         let k = sec.start + 1
-        while (k < sec.end && !L[k].trim()) k++
-        while (k < sec.end && L[k].trim()) k++
+        if (estilo !== 'banda') {
+          while (k < sec.end && !L[k].trim()) k++
+          while (k < sec.end && L[k].trim()) k++
+        }
         return [...L.slice(0, k), '', md, ...L.slice(k)].join('\n')
       }
       return src.replace(/\s*$/, '') + '\n\n' + md + '\n'

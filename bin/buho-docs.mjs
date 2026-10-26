@@ -155,7 +155,10 @@ async function connect() {
   if (!exe) die('Búho Docs no está abierto. Ábrelo (o instala la app) y vuelve a intentarlo.', 2)
   const env = { ...process.env }
   delete env.ELECTRON_RUN_AS_NODE
-  spawn(exe, [], { detached: true, stdio: 'ignore', env }).unref()
+  // En Windows con Start-Process (ShellExecute, como un doble clic): la app no hereda las tuberías de quien
+  // llamó al CLI. Si las heredase (también con «start»), PowerShell o un agente esperarían a que se cerrase.
+  if (process.platform === 'win32') spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `Start-Process -FilePath '${exe.replace(/'/g, "''")}'`], { stdio: 'ignore', env, windowsHide: true }).unref()
+  else spawn(exe, [], { detached: true, stdio: 'ignore', env }).unref()
   io.err('Abriendo Búho Docs…\n')
   for (let i = 0; i < 80; i++) {
     await new Promise((r) => setTimeout(r, 250))
@@ -919,7 +922,7 @@ switch (cmd) {
     }
     if (sub === 'poner') {
       const path = R(args[1] ?? die('Uso: buho-docs imagenes poner <doc> <búsqueda> <n> [--seccion "Título"] [--ancho 70]'))
-      const r = await call('POST', '/v1/imagenes/poner', { path, busqueda: args[2], n: args[3], seccion: opt.seccion, bloque: opt.bloque, hueco: opt.hueco, ancho: opt.ancho, alt: opt.alt, author: author() })
+      const r = await call('POST', '/v1/imagenes/poner', { path, busqueda: args[2], n: args[3], seccion: opt.seccion, bloque: opt.bloque, hueco: opt.hueco, ancho: opt.ancho, estilo: opt.estilo, alt: opt.alt, author: author() })
       if (opt.json) { out(r); break }
       print(`Imagen puesta: ${r.archivo}${r.w ? ` (${r.w}×${r.h})` : ''}${r.aviso ? '\n  aviso: ' + r.aviso : ''}`)
       avisosPaginas({ ...r, changed: true })
@@ -930,7 +933,7 @@ switch (cmd) {
       const prompt = args.slice(2).join(' ') || (typeof opt.text === 'string' ? opt.text : '')
       if (!prompt) die('Falta qué imagen generar')
       io.err('Generando la imagen (OpenAI, de pago)…\n')
-      const r = await call('POST', '/v1/imagenes/generar', { path, prompt, seccion: opt.seccion, bloque: opt.bloque, hueco: opt.hueco, ancho: opt.ancho, alt: opt.alt, tamano: opt.tamano, calidad: opt.calidad, author: author() })
+      const r = await call('POST', '/v1/imagenes/generar', { path, prompt, seccion: opt.seccion, bloque: opt.bloque, hueco: opt.hueco, ancho: opt.ancho, estilo: opt.estilo, alt: opt.alt, tamano: opt.tamano, calidad: opt.calidad, author: author() })
       if (opt.json) { out(r); break }
       print(`Imagen generada (${r.modelo}): ${r.archivo}`)
       avisosPaginas({ ...r, changed: true })
