@@ -406,6 +406,18 @@ try {
   const tiposAire = es.hallazgos.map((h) => h.tipo)
   check(['apertura-grandilocuente', 'no-es-solo', 'cliche-ia', 'exclamacion'].every((t) => tiposAire.includes(t)) && es.hallazgos.every((h) => h.linea === 9), `estilo detecta el aire IA (${es.marcas} marcas) y deja en paz el texto normal`)
 
+  // Lo aprendido haciendo un lead magnet: diagrama demasiado ancho, variante mal escrita, id nuevo al editar.
+  const ancho = ['---', 'tipo: documento', 'titulo: "D"', 'portada: false', '---', '', '## A', '', '::: caja nubecita', 'Hola.', ':::', '', 'Párrafo para editar.', '', '```mermaid', 'flowchart LR', '  A[Primera caja larga] --> B[Segunda caja larga] --> C[Tercera caja larga] --> D[Cuarta caja larga] --> E[Quinta caja larga] --> F[Sexta caja larga] --> G[Séptima]', '```', '']
+  writeFileSync(join(out, 'ancho.md'), ancho.join('\n'))
+  await cli('open', join(out, 'ancho.md'))
+  const sa = await cliJson('scan', join(out, 'ancho.md'), '--sin-mosaico')
+  check(sa.paginas.some((x) => x.avisos.some((y) => y.tipo === 'diagrama-ilegible')), 'scan avisa de un diagrama demasiado ancho para leerse')
+  check((await cliJson('check', join(out, 'ancho.md'))).warnings.some((w) => /Variante «nubecita»/.test(w.message)), 'check avisa de una variante de bloque que no existe')
+  const lp = await cliJson('leer', join(out, 'ancho.md'), '--ids')
+  const idP = lp.text.match(/\[#(b[a-z0-9]+)\] Párrafo para editar/)?.[1]
+  const ed = await cliJson('editar', join(out, 'ancho.md'), '#' + idP, '--text', 'Párrafo ya editado.')
+  check(ed.id && ed.id !== idP && (await cliJson('leer', join(out, 'ancho.md'), '--ids')).text.includes('[#' + ed.id + '] Párrafo ya editado.'), 'editar devuelve el id nuevo del bloque')
+
   // Clic en la vista → el editor va a esa línea.
   await cli('open', doc)
   await frame.locator('.pg').first().waitFor()

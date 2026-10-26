@@ -304,7 +304,11 @@ flowchart LR
 ```
 ````
 
-Para explicar un proceso, una arquitectura o un flujo, **un diagrama Mermaid o un SVG propio vale más que tres párrafos**. Los SVG que dibujes: `viewBox` siempre, texto legible (≥ 14 px a su tamaño), colores del documento (#0A1F3A, #00C1B8, #E8F8F7 en el tema Búho), nada de degradados ni sombras gratuitas. Revisa la captura: si no se entiende de un vistazo, simplifica. Los precios en dólares escríbelos «5 $» (con espacio) para que no se tomen por fórmula.
+Para explicar un proceso, una arquitectura o un flujo, **un diagrama Mermaid o un SVG propio vale más que tres párrafos**. Lo que cabe bien en una página A4 (medido):
+- **Mermaid** para flujos cortos: `flowchart LR` de hasta 4 cajas con etiquetas de 1-3 palabras, o `flowchart TD` de hasta 4 niveles; `sequenceDiagram` con 3-4 participantes y mensajes de pocas palabras. Más que eso se encoge y no se lee (el cambio te avisa: «diagrama-ilegible» o «diagrama-estrecho»).
+- **Bucles, arquitecturas por capas y esquemas con posición propia**: mejor un **SVG** tuyo, a la medida (ancho del viewBox ~640, letra 14-16).
+- **Árboles de decisión de más de 3 preguntas**: mejor una **tabla** «Si… → Entonces…».
+- Para rehacer un diagrama o cualquier bloque de varias líneas, no uses `replace`/`batch` con el texto escapado: `buho-docs leer <doc> --seccion "…" --ids` y `buho-docs editar <doc> #id --file nuevo.md` (devuelve el id nuevo para seguir iterando). Los SVG que dibujes: `viewBox` siempre, texto legible (≥ 14 px a su tamaño), colores del documento (#0A1F3A, #00C1B8, #E8F8F7 en el tema Búho), nada de degradados ni sombras gratuitas. Revisa la captura: si no se entiende de un vistazo, simplifica. Los precios en dólares escríbelos «5 $» (con espacio) para que no se tomen por fórmula.
 
 **Gráficos:** con una tabla dentro de `::: grafico` se dibuja solo (colores accesibles, valores en las barras); `unidad=%` o `unidad=€` si no se deduce. En Word y PowerPoint sale como gráfico nativo con sus datos. Dentro de `::: columnas` se dibuja estrecho. Datos reales del usuario o con fuente, nunca inventados.
 

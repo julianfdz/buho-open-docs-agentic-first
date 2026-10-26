@@ -133,6 +133,14 @@ function makeMd(): MarkdownIt {
       const niveles = Number(a.kv.niveles ?? a.classes.find((c) => /^is-\d$/.test(c))?.slice(3)) || 2
       return `<div class="bx bx-indice" data-line="${t.attrGet('data-line') ?? ''}" data-end="${t.attrGet('data-end') ?? ''}" data-niveles="${niveles}" data-titulo="${escHtml(a.kv.titulo ?? 'Índice')}"><div class="bx-body">\n`
     }
+    // Variantes: «::: caja navy» (también vale «is-navy»); las que no existen se avisan.
+    a.classes = a.classes.map((c) => c.replace(/^is-is-/, 'is-'))
+    const VARIANTES: Record<string, string[]> = { caja: ['navy', 'oscura', 'gris', 'aviso', 'blanca'], tarjetas: ['blancas'], pasos: ['horizontal'], cifras: [], columnas: [], panel: [], nota: [], cita: [], centro: [] }
+    const permitidas = VARIANTES[t.info]
+    if (permitidas)
+      for (const c of a.classes.filter((x) => x.startsWith('is-') && !/^is-\d$/.test(x)))
+        if (!permitidas.includes(c.slice(3)))
+          env.warnings.push({ line: t.map[0] + 1 + env.lineOffset, level: 'aviso', message: `Variante «${c.slice(3)}» desconocida en ::: ${t.info}${permitidas.length ? ` (hay: ${permitidas.join(', ')})` : ' (no tiene variantes)'}` })
     if (!(CONTAINERS as readonly string[]).includes(t.info)) env.warnings.push({ line: t.map[0] + 1 + env.lineOffset, level: 'aviso', message: `Bloque desconocido «::: ${t.info}» (hay: ${CONTAINERS.join(', ')})` })
     const cls = [`bx`, `bx-${t.info}`, ...a.classes, ...(tokens[i + 1]?.type === 'col_open' ? ['has-cols'] : [])]
     const icon = a.kv.icon ? iconFor(a.kv.icon, env, t.map[0] + 1) : ''

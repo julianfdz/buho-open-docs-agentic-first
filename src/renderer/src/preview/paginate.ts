@@ -76,8 +76,21 @@ function splitText(el: HTMLElement, box: HTMLElement): HTMLElement | null {
     if (bottom(words[mid]) > limit) hi = mid
     else lo = mid + 1
   }
-  // Al menos dos líneas en cada lado (viudas y huérfanas, más o menos).
-  if (lo < 3 || lo > words.length - 3) return null
+  // Viudas y huérfanas: al menos dos líneas en cada lado. Si al otro lado solo iría una línea, se
+  // lleva también la anterior; si en esta página solo quedaría una, el párrafo pasa entero.
+  if (lo < 1 || lo >= words.length) return null
+  const top = (w: { node: Text; offset: number }): number => {
+    const r = document.createRange()
+    r.setStart(w.node, w.offset)
+    r.setEnd(w.node, Math.min(w.node.length, w.offset + 1))
+    return Math.round(r.getBoundingClientRect().top)
+  }
+  const lineas = (a: number, b: number): number => new Set(words.slice(a, b).map(top)).size
+  if (lineas(lo, words.length) < 2) {
+    const t = top(words[lo - 1])
+    while (lo > 0 && top(words[lo - 1]) === t) lo--
+  }
+  if (lo < 1 || lineas(0, lo) < 2) return null
   const r = document.createRange()
   r.setStart(words[lo].node, words[lo].offset)
   r.setEndAfter(el.lastChild!)

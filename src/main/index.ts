@@ -805,7 +805,16 @@ async function apiCall(method: string, p: Record<string, unknown>): Promise<unkn
         return { ...b, markdown: raw }
       }
       const label: Record<string, string> = { replace: 'reescrito', before: 'bloque nuevo antes', after: 'bloque nuevo después', delete: 'eliminado' }
-      return result(await docs.applyChange(target, (src) => editBlock(src, id, mode, s('content') ?? ''), ai(`Bloque #${id} ${label[mode] ?? mode}`)))
+      const antes = indexOf(target, await docs.current(target)).blocks.find((x) => x.id === id)
+      const r = await docs.applyChange(target, (src) => editBlock(src, id, mode, s('content') ?? ''), ai(`Bloque #${id} ${label[mode] ?? mode}`))
+      // El id sale del texto: al cambiar el bloque cambia. Se devuelve el nuevo para poder seguir con él.
+      let nuevos: string[] = []
+      if (r.changed && antes && mode !== 'delete') {
+        const n = (s('content') ?? '').trim().split(/\r?\n/).length
+        const desde = mode === 'after' ? antes.end + 1 : antes.line
+        nuevos = indexOf(target, r.content).blocks.filter((x) => x.line >= desde && x.line < desde + n + 1 && x.type !== 'diapositiva').map((x) => x.id)
+      }
+      return { ...(await result(r)), ...(nuevos.length ? { id: nuevos[0], ids: nuevos } : {}) }
     }
     case 'tag': {
       const target = path()

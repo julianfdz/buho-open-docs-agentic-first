@@ -265,6 +265,7 @@ async function pipeClaude(input, id) {
 function changed(r) {
   if (opt.json) return out(r)
   print(r.changed === false ? r.message ?? 'Sin cambios' : `Hecho${r.replaced ? ` (${r.replaced} cambio${r.replaced > 1 ? 's' : ''})` : ''} · ${r.path} · ${r.lines ?? ''} líneas · el usuario lo ve en directo`)
+  if (r.id) print(`Id nuevo del bloque: #${r.id}${r.ids?.length > 1 ? ` (y ${r.ids.slice(1).map((x) => '#' + x).join(', ')})` : ''}`)
   avisosPaginas(r)
 }
 
@@ -455,7 +456,10 @@ switch (cmd) {
     }
     const r = await call('POST', '/v1/batch', { path, ops, author: author() })
     if (opt.json) out(r)
-    else print(`Hecho: ${r.applied} cambio${r.applied === 1 ? '' : 's'} de una vez${r.created ? ' (documento creado)' : ''} · ${r.path} · el usuario lo ve en directo`)
+    else {
+      print(`Hecho: ${r.applied} cambio${r.applied === 1 ? '' : 's'} de una vez${r.created ? ' (documento creado)' : ''} · ${r.path} · el usuario lo ve en directo`)
+      avisosPaginas(r)
+    }
     break
   }
   case 'stream': {

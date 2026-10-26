@@ -25,6 +25,34 @@ export interface PaginaInfo {
 const paginas = (): HTMLElement[] => [...document.querySelectorAll<HTMLElement>('#root > .doc > .pg, #root > .deck > .slide')]
 const lineaDe = (el: Element | null): number | undefined => Number((el?.closest('[data-line]') as HTMLElement | null)?.dataset.line) || undefined
 
+/** Color de fondo efectivo: el primero no transparente subiendo por los padres (blanco si ninguno). */
+function fondoDe(el: HTMLElement): string {
+  for (let e: HTMLElement | null = el; e; e = e.parentElement) {
+    const c = getComputedStyle(e).backgroundColor
+    if (c && !/rgba\([^)]*,\s*0\)$/.test(c) && c !== 'transparent') return c
+  }
+  return 'rgb(255, 255, 255)'
+}
+const rgb = (c: string): [number, number, number] | null => {
+  const m = c.match(/rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)/)
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null
+}
+const luz = ([r, g, b]: [number, number, number]): number => {
+  const f = (v: number): number => {
+    const s = v / 255
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
+  }
+  return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b)
+}
+/** Relación de contraste WCAG entre dos colores CSS (null si no se puede calcular). */
+function contraste(a: string, b: string): number | null {
+  const x = rgb(a)
+  const y = rgb(b)
+  if (!x || !y) return null
+  const [l1, l2] = [luz(x), luz(y)].sort((m, n) => n - m)
+  return (l1 + 0.05) / (l2 + 0.05)
+}
+
 export function inspeccionar(): { kind: string; pages: PaginaInfo[] } {
   const deck = !!document.querySelector('#root > .deck')
   const ps = paginas()
@@ -62,7 +90,9 @@ export function inspeccionar(): { kind: string; pages: PaginaInfo[] } {
         if (prim && prevUlt && prim.dataset.line && prim.dataset.line === prevUlt.dataset.line) {
           const hPrim = prim.getBoundingClientRect().height
           const hPrev = prevUlt.getBoundingClientRect().height
-          if (Math.min(hPrim, hPrev) < cr.height * 0.1) avisos.push({ tipo: 'bloque-partido', nivel: 'aviso', mensaje: `Un bloque se parte entre las páginas ${i} y ${i + 1} y deja solo un trocito en la ${hPrim < hPrev ? 'segunda' : 'primera'} (acórtalo o pártelo tú)`, linea: lineaDe(prim) })
+          // Solo si en un lado queda una sola línea (dos ya es correcto).
+          const lh = parseFloat(getComputedStyle(prim).lineHeight) || parseFloat(getComputedStyle(prim).fontSize) * 1.4 || 20
+          if (Math.min(hPrim, hPrev) < lh * 1.6) avisos.push({ tipo: 'bloque-partido', nivel: 'aviso', mensaje: `Un bloque se parte entre las páginas ${i} y ${i + 1} y deja solo un trocito en la ${hPrim < hPrev ? 'segunda' : 'primera'} (acórtalo o pártelo tú)`, linea: lineaDe(prim) })
         }
         if (fondo > cr.bottom + 3) avisos.push({ tipo: 'se-sale-por-abajo', nivel: 'error', mensaje: 'El contenido se sale por abajo de la página (un bloque demasiado alto que no se puede partir)', linea: lineaDe(hijos.find((c) => c.getBoundingClientRect().bottom > cr.bottom + 3) ?? null) })
       }
@@ -72,6 +102,48 @@ export function inspeccionar(): { kind: string; pages: PaginaInfo[] } {
         const r = el.getBoundingClientRect()
         if (r.width && (r.right > cr.right + 4 || el.scrollWidth > el.clientWidth + 4)) {
           avisos.push({ tipo: 'se-sale-por-la-derecha', nivel: 'error', mensaje: `${el.tagName === 'TABLE' ? 'Una tabla' : el.tagName === 'IMG' ? 'Una imagen' : 'Un bloque'} se sale por la derecha`, linea: lineaDe(el) })
+          break
+        }
+      }
+      // Diagramas y SVG: si para caber se encogen tanto que el texto no se lee.
+      for (const fig of p.querySelectorAll<HTMLElement>('.bx-mermaid, .bx-svg')) {
+        const svg = fig.querySelector('svg')
+        if (!svg) continue
+        // Letra efectiva = su tamaño en el dibujo × lo que se ha encogido el dibujo para caber.
+        // (el SVG puede ocupar todo el ancho pero quedar limitado por el alto: manda lo que más encoja)
+        const vb = svg.viewBox?.baseVal
+        const sr = svg.getBoundingClientRect()
+        const escala = vb && vb.width && vb.height ? Math.min(sr.width / vb.width, sr.height / vb.height) : 1
+        const tamaños = [...svg.querySelectorAll('text, foreignObject span, foreignObject div')]
+          .filter((t) => (t.textContent ?? '').trim())
+          .map((t) => parseFloat(getComputedStyle(t).fontSize) * escala)
+          .filter((h) => h > 0)
+          .sort((x, y) => x - y)
+        if (!tamaños.length) continue
+        const mediana = tamaños[Math.floor(tamaños.length / 2)]
+        // Comparada con la letra del texto normal: por debajo de ~65 % ya cuesta leerla.
+        const base = parseFloat(getComputedStyle(cuerpo.querySelector('p') ?? cuerpo).fontSize) || 14
+        if (mediana < base * 0.65)
+          avisos.push({ tipo: 'diagrama-ilegible', nivel: 'error', mensaje: `El texto del ${fig.classList.contains('bx-svg') ? 'dibujo' : 'diagrama'} sale diminuto (${Math.round((mediana / base) * 100)} % de la letra del texto): es demasiado ancho o alto para la página. Menos nodos, etiquetas más cortas, o cambia la dirección (flowchart TD ↔ LR); en secuencias, menos participantes o mensajes más cortos`, linea: lineaDe(fig) })
+      }
+      // Diagramas muy altos y estrechos: letra pequeña y mucho hueco a los lados.
+      if (!deck)
+        for (const fig of p.querySelectorAll<HTMLElement>('.bx-mermaid, .bx-svg')) {
+          const svg = fig.querySelector('svg')
+          const vb = svg?.viewBox?.baseVal
+          if (!svg || !vb?.width || !vb.height) continue
+          // Lo que ocupa el dibujo de verdad (no la caja del SVG, que puede ir a todo el ancho).
+          const sr = svg.getBoundingClientRect()
+          const z = Math.min(sr.width / vb.width, sr.height / vb.height)
+          if (vb.width * z < cr.width * 0.55 && vb.height * z > cr.height * 0.4)
+            avisos.push({ tipo: 'diagrama-estrecho', nivel: 'aviso', mensaje: 'Diagrama muy alto y estrecho: deja mucho hueco a los lados y la letra sale pequeña. Prueba flowchart LR o agrupa pasos', linea: lineaDe(fig) })
+        }
+      // Texto con poco contraste con su fondo (p. ej. un enlace oscuro sobre una caja oscura).
+      for (const el of p.querySelectorAll<HTMLElement>('a, strong, em, code, span.ic + span, td, li, p')) {
+        if (!(el.textContent ?? '').trim() || el.closest('svg, .pg-cab, .pg-pie')) continue
+        const ratio = contraste(getComputedStyle(el).color, fondoDe(el))
+        if (ratio !== null && ratio < 3) {
+          avisos.push({ tipo: 'poco-contraste', nivel: 'error', mensaje: `Texto con poco contraste con su fondo (${ratio.toFixed(1)}:1): «${(el.textContent ?? '').trim().slice(0, 40)}» no se lee bien`, linea: lineaDe(el) })
           break
         }
       }

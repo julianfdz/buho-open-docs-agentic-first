@@ -48,8 +48,10 @@ function cargar(tema: Tema): Promise<Mermaid> {
           pie5: '#9B59C9',
           pie6: '#5E9C3A'
         },
-        flowchart: { htmlLabels: false, curve: 'basis', padding: 14 },
-        sequence: { useMaxWidth: true }
+        // Compacto: en una página A4 cada píxel de separación encoge la letra al ajustar el ancho.
+        flowchart: { htmlLabels: false, curve: 'basis', padding: 8, nodeSpacing: 28, rankSpacing: 34, diagramPadding: 4, wrappingWidth: 150 },
+        sequence: { useMaxWidth: true, actorMargin: 30, boxMargin: 6, messageMargin: 26, diagramMarginX: 4, diagramMarginY: 4, width: 120, height: 40 },
+        gantt: { barHeight: 18, barGap: 4, topPadding: 40, leftPadding: 70 }
       })
       hechos.clear()
     }

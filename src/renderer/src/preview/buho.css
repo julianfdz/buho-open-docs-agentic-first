@@ -1289,3 +1289,19 @@ figure.code code {
   text-align: left;
   border: 1px dashed #c9455a;
 }
+
+/* Enlaces sobre fondos oscuros (cajas navy, panel, diapositivas oscuras): claros y subrayados */
+.bx-caja.is-navy a,
+.bx-caja.is-oscura a,
+.bx-panel a,
+.slide.oscuro a {
+  color: var(--turq, #00c1b8);
+  text-decoration: underline;
+}
+
+/* Enlaces en el texto: turquesa algo más oscuro para que se lean bien sobre blanco (contraste ≥ 4:1) */
+.pg-cuerpo a,
+.pg-portada a,
+.slide:not(.oscuro) a {
+  color: color-mix(in srgb, var(--turq, #00c1b8) 68%, #000);
+}
