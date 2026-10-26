@@ -36,6 +36,9 @@ interface Props {
   marcas: { comentarios: number[]; propuestas: number[] } | null
   /** Modo comentar: clic en la página = comentario. */
   comentando: boolean
+  /** Zoom pedido por la app (null = ajustar al ancho); nonce para repetir el mismo valor. */
+  zoom: { valor: number | null; nonce: number } | null
+  onZoom(m: { zoom: number | null; real: number }): void
   onRendered(r: RenderResult): void
   onPick(m: { line: number; word: string; double: boolean }): void
   onVisual(m: VisualMsg): void
@@ -57,6 +60,7 @@ export default function Preview(p: Props): React.JSX.Element {
       if (m?.type === 'ready') setReady(true)
       else if (m?.type === 'rendered' && m.id === seq.current) props.current.onRendered(m.result)
       else if (m?.type === 'click') props.current.onPick(m)
+      else if (m?.type === 'zoom') props.current.onZoom(m)
       else if (['edit', 'split', 'merge', 'focus', 'undo', 'redo', 'key', 'caret', 'comentar', 'ctx'].includes(m?.type)) props.current.onVisual(m)
     }
     addEventListener('message', onMsg)
@@ -86,6 +90,10 @@ export default function Preview(p: Props): React.JSX.Element {
   useEffect(() => {
     if (ready) frame.current?.contentWindow?.postMessage({ type: 'comentar', on: p.comentando }, '*')
   }, [ready, p.comentando])
+
+  useEffect(() => {
+    if (ready && p.zoom) frame.current?.contentWindow?.postMessage({ type: 'zoom', zoom: p.zoom.valor }, '*')
+  }, [ready, p.zoom?.nonce])
 
   useEffect(() => {
     if (ready && p.follow) frame.current?.contentWindow?.postMessage({ type: 'scrollTo', line: p.follow, quiet: true }, '*')

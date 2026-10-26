@@ -74,7 +74,10 @@ export default function FormatBar(p: Props): React.JSX.Element {
   const off = !p.block
   const cellOrMeta = !!p.block && (p.block.tag === 'td' || p.block.tag === 'th' || !!p.block.meta)
   // Los botones no roban el foco de la página (así la selección sigue donde estaba).
-  const keep = (e: React.MouseEvent): void => e.preventDefault()
+  // Los botones no roban el foco a la página (se pierde la selección); los desplegables sí lo necesitan para abrirse.
+  const keep = (e: React.MouseEvent): void => {
+    if (!(e.target as HTMLElement).closest('select, input, option')) e.preventDefault()
+  }
 
   return (
     <div className="formatbar" onMouseDown={keep}>

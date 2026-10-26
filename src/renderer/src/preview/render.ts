@@ -297,7 +297,9 @@ function buildDoc(src: string, baseDir: string, temaIn?: Tema): Built {
   const pie = g('pie', 'footer') ?? tema.pie ?? (tema.id === 'buho' ? 'Búho AI · Tu equipo técnico de IA · buhoai.es' : '')
   const pieDer = g('pie-derecha', 'footer-right')
   const nota = g('nota-pie', 'aviso-pie', 'disclaimer')
-  const chrome = { logo: tema.logo ?? (buhoBase ? buho : ''), marca: tema.marca ?? (buhoBase ? 'BÚHO AI' : ''), cab, pie, pieDer, nota }
+  // «secciones: seguidas» en la cabecera deja que una sección empiece donde acaba la anterior.
+  const seccionNueva = !/^(seguidas|seguido|continuas?|no|false)$/i.test(g('secciones', 'sections') ?? '')
+  const chrome = { logo: tema.logo ?? (buhoBase ? buho : ''), marca: tema.marca ?? (buhoBase ? 'BÚHO AI' : ''), cab, pie, pieDer, nota, seccionNueva }
   return { kind: 'documento', meta, html, chrome, theme: tema.base, tema, css: cssOf(meta, baseDir), title, warnings }
 }
 

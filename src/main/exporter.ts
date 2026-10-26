@@ -262,6 +262,29 @@ export function rasterizar(source: string, path: string): Promise<{ tipo: 'merma
   })
 }
 
+/**
+ * Hoja de contactos: miniaturas numeradas (con su licencia) en una sola imagen, para que un agente
+ * elija de un vistazo qué foto encaja. Se pinta en una ventana oculta aparte.
+ */
+export async function hojaContactos(items: { n: number; thumb: string; pie: string }[], cols = 4): Promise<Buffer> {
+  const w = new BrowserWindow({ show: false, width: 1200, height: 900, webPreferences: { sandbox: true, offscreen: false, backgroundThrottling: false } })
+  try {
+    const esc = (t: string): string => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;')
+    const html = `<!doctype html><meta charset="utf-8"><style>body{margin:0;padding:10px;background:#c9d1db;font:13px Calibri,sans-serif;color:#1c2a3b}
+      .g{display:grid;grid-template-columns:repeat(${cols},1fr);gap:10px}.c{background:#fff;padding:6px;border-radius:6px}
+      .c img{width:100%;height:190px;object-fit:cover;display:block;background:#eef1f5}.c b{font-size:16px;color:#0a1f3a}.c span{display:block;font-size:11px;color:#5d6b7c;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}</style>
+      <div class="g">${items.map((it) => `<div class="c"><img src="${esc(it.thumb)}"><b>${it.n}</b><span>${esc(it.pie)}</span></div>`).join('')}</div>`
+    await w.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html))
+    await w.webContents.executeJavaScript("Promise.all([...document.images].map((i) => i.complete ? 0 : new Promise((r) => { i.onload = i.onerror = r; setTimeout(r, 15000) })))")
+    const h = (await w.webContents.executeJavaScript('document.body.scrollHeight')) as number
+    w.setContentSize(1200, Math.min(4000, h))
+    await w.webContents.executeJavaScript('new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))')
+    return (await w.webContents.capturePage({ x: 0, y: 0, width: 1200, height: Math.min(4000, h) })).toPNG()
+  } finally {
+    w.destroy()
+  }
+}
+
 export function closeExporter(): void {
   if (win && !win.isDestroyed()) win.destroy()
 }

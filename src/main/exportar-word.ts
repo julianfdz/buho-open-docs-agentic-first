@@ -54,7 +54,7 @@ const hex = (c: string | undefined, d: string): string => (c ?? d).replace('#', 
 const font = (f: string | undefined, d: string): string => (f ?? d).split(',')[0].replace(/['"]/g, '').trim()
 
 /** Tamaño de una imagen PNG o JPEG (para que salga a su proporción). */
-function imageSize(b: Buffer): { w: number; h: number } | null {
+export function imageSize(b: Buffer): { w: number; h: number } | null {
   if (b.length > 24 && b.readUInt32BE(0) === 0x89504e47) return { w: b.readUInt32BE(16), h: b.readUInt32BE(20) }
   if (b[0] === 0xff && b[1] === 0xd8) {
     let i = 2

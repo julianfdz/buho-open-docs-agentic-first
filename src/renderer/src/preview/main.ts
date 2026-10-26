@@ -204,12 +204,46 @@ function flash(container: HTMLElement, lines: number[], reveal: boolean): void {
 
 // ─── Pintar ────────────────────────────────────────────────────────────────────────────────────
 
+/** Zoom elegido (null = ajustar al ancho de la ventana). */
+let zoomUsuario: number | null = null
+const zoomAjuste = (): number => Math.min(1.25, Math.max(0.2, (innerWidth - 40) / pageWidth))
 function fit(): void {
   if (!current || printMode) return
-  const z = Math.min(1.25, Math.max(0.2, (innerWidth - 40) / pageWidth))
-  current.style.zoom = String(z)
+  current.style.zoom = String(zoomUsuario ?? zoomAjuste())
+  parent.postMessage({ type: 'zoom', zoom: zoomUsuario, real: Number(current.style.zoom) || 1 }, '*')
 }
 addEventListener('resize', fit)
+/** Cambia el zoom manteniendo a la vista lo que había (y avisa a la app para recordarlo). */
+function ponerZoom(z: number | null, avisar = true): void {
+  const antes = Number(current?.style.zoom) || 1
+  const rel = scrollY / Math.max(1, document.documentElement.scrollHeight)
+  zoomUsuario = z === null ? null : Math.min(4, Math.max(0.25, Math.round(z * 100) / 100))
+  fit()
+  if (current && antes !== Number(current.style.zoom)) scrollTo(scrollX, rel * document.documentElement.scrollHeight)
+  if (avisar) parent.postMessage({ type: 'zoom', zoom: zoomUsuario, real: Number(current?.style.zoom) || 1 }, '*')
+}
+if (!printMode) {
+  // Ctrl + rueda: zoom (como en Word o el navegador).
+  addEventListener(
+    'wheel',
+    (e: WheelEvent) => {
+      if (!e.ctrlKey) return
+      e.preventDefault()
+      const z = Number(current?.style.zoom) || 1
+      ponerZoom(z * (e.deltaY < 0 ? 1.1 : 1 / 1.1))
+    },
+    { passive: false }
+  )
+  addEventListener('keydown', (e: KeyboardEvent) => {
+    if (!(e.ctrlKey || e.metaKey)) return
+    const z = Number(current?.style.zoom) || 1
+    if (e.key === '+' || e.key === '=') ponerZoom(z * 1.1)
+    else if (e.key === '-') ponerZoom(z / 1.1)
+    else if (e.key === '0') ponerZoom(null)
+    else return
+    e.preventDefault()
+  })
+}
 
 async function waitImages(el: HTMLElement): Promise<void> {
   const imgs = [...el.querySelectorAll('img')]
@@ -376,6 +410,8 @@ if (!printMode) {
       }
     } else if (m?.type === 'cmd') {
       runCommand(m.name, m.value)
+    } else if (m?.type === 'zoom') {
+      ponerZoom(m.zoom ?? null, m.avisar !== false)
     } else if (m?.type === 'comentar') {
       comentando = !!m.on
       document.body.classList.toggle('comentando', comentando)

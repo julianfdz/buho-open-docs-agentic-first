@@ -75,7 +75,8 @@ export function inspeccionar(): { kind: string; pages: PaginaInfo[] } {
       const fondo = hijos.reduce((m, c) => Math.max(m, c.getBoundingClientRect().bottom), cr.top)
       const llenado = cr.height ? Math.max(0, Math.min(1.5, (fondo - cr.top) / cr.height)) : 0
       const ultimo = ps.length === i + 1
-      const conSalto = !!cuerpo.lastElementChild?.classList.contains('salto') || !!p.nextElementSibling?.querySelector('.pg-cuerpo > :first-child.salto')
+      // Hueco intencionado: salto de página o la siguiente página empieza sección (##).
+      const conSalto = !!cuerpo.lastElementChild?.classList.contains('salto') || !!p.nextElementSibling?.querySelector('.pg-cuerpo > :first-child.salto, .pg-cuerpo > h2:first-child, .pg-cuerpo > .keep:first-child > h2:first-child')
 
       if (!deck && !portada) {
         if (!ultimo && !conSalto && llenado < 0.45 && hijos.length)
@@ -144,6 +145,14 @@ export function inspeccionar(): { kind: string; pages: PaginaInfo[] } {
         const ratio = contraste(getComputedStyle(el).color, fondoDe(el))
         if (ratio !== null && ratio < 3) {
           avisos.push({ tipo: 'poco-contraste', nivel: 'error', mensaje: `Texto con poco contraste con su fondo (${ratio.toFixed(1)}:1): «${(el.textContent ?? '').trim().slice(0, 40)}» no se lee bien`, linea: lineaDe(el) })
+          break
+        }
+      }
+      // Fotos con poca resolución para el tamaño al que salen: borrosas al imprimir.
+      for (const img of cuerpo.querySelectorAll('img')) {
+        const w = img.getBoundingClientRect().width / (Number((document.querySelector('#root > div') as HTMLElement | null)?.style.zoom) || 1)
+        if (img.naturalWidth && w > 120 && img.naturalWidth < w * 1.3) {
+          avisos.push({ tipo: 'imagen-baja-resolucion', nivel: 'aviso', mensaje: `Imagen de ${img.naturalWidth} px mostrada a ${Math.round(w)} px: se verá borrosa al imprimir (ponla más pequeña con {width=…} o busca otra)`, linea: lineaDe(img) })
           break
         }
       }

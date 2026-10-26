@@ -33,6 +33,15 @@
  *   buho-docs estilo <archivo.md>                   # dónde está y qué hacer (determinista)
  *   buho-docs humanizar <archivo.md> [--directo]    # un agente por bloque, a la vez; deja propuestas
  *
+ *   Modelos (generar, torneo, atender, humanizar): --proveedor claude|cerebras|groq, o --mega (el más rápido)
+ *   buho-docs proveedores                           # qué hay configurado
+ *   buho-docs proveedor cerebras --env archivo.env [--defecto]   # clave leída del .env (no se enseña)
+ *
+ *   Imágenes:
+ *   buho-docs imagenes buscar "consulta" [--n 8] [--forma horizontal]   # banco con licencia: hoja de contactos
+ *   buho-docs imagenes poner <doc> <búsqueda> <n> [--seccion "T"] [--ancho 70]   # con su pie de créditos
+ *   buho-docs imagenes generar <doc> "qué imagen" [--seccion "T"]   # OpenAI, de pago: proveedor openai --imagenes si
+ *
  *   buho-docs open <archivo.md>                     (lo abre y lo enseña)
  *   buho-docs read <archivo.md> [--lines]           (contenido; --lines con números de línea)
  *   buho-docs outline <archivo.md>                  (títulos y diapositivas con su línea)
@@ -83,7 +92,7 @@ const portableDir = existsSync(join(here, '..', 'portable.txt')) ? join(here, '.
 const dataDir = process.env.BUHO_DATA_DIR || portableDir || join(process.env.APPDATA || join(process.env.HOME || '', '.config'), 'BuhoDocs')
 
 
-const FLAGS = new Set(['all', 'lines', 'json', 'no-launch', 'stdin', 'path', 'help', 'claude', 'quitar', 'ids', 'bloques', 'borrar', 'captura', 'ia', 'rapido', 'word', 'proponer', 'todas', 'abiertos', 'resolver', 'directo', 'pptx', 'powerpoint', 'office', 'cambiadas', 'capturas', 'sin-capturas', 'sin-mosaico'])
+const FLAGS = new Set(['all', 'lines', 'json', 'no-launch', 'stdin', 'path', 'help', 'claude', 'quitar', 'ids', 'bloques', 'borrar', 'captura', 'ia', 'rapido', 'word', 'proponer', 'todas', 'abiertos', 'resolver', 'directo', 'pptx', 'powerpoint', 'office', 'cambiadas', 'capturas', 'sin-capturas', 'sin-mosaico', 'mega', 'defecto'])
 function parseArgs(argv) {
   const pos = []
   const opt = {}
@@ -132,7 +141,8 @@ function appExe() {
 async function alive(info) {
   if (!info) return false
   try {
-    return (await fetch(info.url + '/v1/status', { headers: { authorization: `Bearer ${info.token}` } })).ok
+    // Con tiempo límite: una app que aún arranca acepta la conexión pero tarda en contestar.
+    return (await fetch(info.url + '/v1/status', { headers: { authorization: `Bearer ${info.token}` }, signal: AbortSignal.timeout(2000) })).ok
   } catch {
     return false
   }
@@ -176,6 +186,39 @@ const call0 = io.call ?? httpCall
 /** --proponer en cualquier comando que cambie el documento: queda como propuesta (control de cambios). */
 const call = (method, path, body) =>
   call0(method, path, method === 'POST' && body && (opt.proponer || typeof opt.comentario === 'string') ? { ...body, ...(opt.proponer ? { proponer: true } : {}), ...(typeof opt.comentario === 'string' ? { comentario: opt.comentario.replace(/^#/, '') } : {}) } : body)
+
+/**
+ * Proveedor de texto para los agentes: --proveedor claude|cerebras|groq, o --mega (el más rápido que
+ * esté configurado); si no, el que tenga la app por defecto (claude salvo que se cambie).
+ */
+let proveedorCache
+async function proveedorTexto() {
+  if (typeof opt.proveedor === 'string') return opt.proveedor
+  const e = (proveedorCache ??= await call('GET', '/v1/proveedores'))
+  if (opt.mega) return ['cerebras', 'groq'].find((id) => e.proveedores.find((p) => p.id === id)?.configurado) ?? die('El modo --mega necesita Cerebras o Groq: buho-docs proveedor cerebras --env archivo.env')
+  return e.porDefecto ?? 'claude'
+}
+/** Pide un texto al modelo. Devuelve { is_error, result } como `claude -p --output-format json`. */
+async function pedirLLM(pedir, modeloClaude) {
+  const p = await proveedorTexto()
+  if (p !== 'claude') {
+    const r = await call('POST', '/v1/llm', { proveedor: p, prompt: pedir, modelo: typeof opt['modelo-rapido'] === 'string' ? opt['modelo-rapido'] : undefined })
+    return r.ok ? { result: r.texto, proveedor: p, ms: r.ms } : { is_error: true, result: r.error }
+  }
+  const salida = await new Promise((ok) => {
+    const child = spawn('claude', ['-p', '--model', modeloClaude, '--output-format', 'json'], { shell: process.platform === 'win32', stdio: ['pipe', 'pipe', 'pipe'] })
+    let o = ''
+    child.stdout.on('data', (d) => (o += d))
+    child.on('error', (e) => ok(JSON.stringify({ is_error: true, result: String(e) })))
+    child.on('close', () => ok(o))
+    child.stdin.end(pedir)
+  })
+  try {
+    return JSON.parse(salida)
+  } catch {
+    return { is_error: true, result: String(salida).slice(0, 160) || 'sin respuesta' }
+  }
+}
 
 const qs = (o) => {
   const p = new URLSearchParams()
@@ -543,14 +586,7 @@ switch (cmd) {
           : '{"titulo": "…", "subtitulo": "…", "etiqueta": "TEMA · SUBTEMA EN MAYÚSCULAS", "contexto": "para quién es y con qué tono, en una frase", "secciones": [{"titulo": "1. …", "pide": "qué debe contar, concreto, en una o dos frases"}]}',
         'Los títulos de sección, numerados y cortos. Que las partes no se solapen.'
       ].join('\n')
-      const out = await new Promise((ok, ko) => {
-        const child = spawn('claude', ['-p', '--model', opt['modelo-plan'] ?? 'haiku', '--output-format', 'json'], { shell: process.platform === 'win32', stdio: ['pipe', 'pipe', 'pipe'] })
-        let o = ''
-        child.stdout.on('data', (d) => (o += d))
-        child.on('error', ko)
-        child.on('close', () => ok(o))
-        child.stdin.end(pedir)
-      })
+      const out = JSON.stringify(await pedirLLM(pedir, opt['modelo-plan'] ?? 'haiku'))
       let res
       try {
         res = JSON.parse(out)
@@ -611,7 +647,7 @@ switch (cmd) {
         .join('\n')
       await call('POST', '/v1/batch', { path, ops: [{ op: 'write', content: front + '\n' + skel }], author: quien })
     }
-    io.err(`Esqueleto con ${items.length} ${deck ? 'diapositivas' : 'secciones'} en ${Date.now() - t0} ms. Escribiendo ${Math.min(paralelo, items.length)} a la vez con ${modelo}…\n`)
+    io.err(`Esqueleto con ${items.length} ${deck ? 'diapositivas' : 'secciones'} en ${Date.now() - t0} ms. Escribiendo ${Math.min(paralelo, items.length)} a la vez con ${(await proveedorTexto()) === 'claude' ? modelo : await proveedorTexto()}…\n`)
     // 2 · Un modelo por sección, `paralelo` a la vez, cada uno escribiendo en directo en su hueco.
     const sintaxis = deck
       ? 'Es el CONTENIDO de una diapositiva 16:9 (sin el título, que ya está). Muy breve: de 3 a 5 viñetas cortas, o un bloque «::: tarjetas 2» o «::: tarjetas 3» con «### Título {icon=reloj}» y una línea de texto por tarjeta, o un «::: cifras 3» con «- **cifra** texto». Como mucho 60 palabras.'
@@ -644,9 +680,18 @@ switch (cmd) {
     const runOne = async (it, i) => {
       const t = Date.now()
       const st = await call('POST', '/v1/stream/start', { path, hueco: id(i), author: quien, summary: `${items.length} ${deck ? 'diapositivas' : 'secciones'} generadas en paralelo` })
-      const child = spawn('claude', ['-p', '--model', modelo, '--output-format', 'stream-json', '--include-partial-messages', '--verbose'], { shell: process.platform === 'win32', stdio: ['pipe', 'pipe', 'ignore'] })
-      child.stdin.end(prompt(it, i))
-      const res = await pipeClaude(child.stdout, st.id)
+      let res
+      if ((await proveedorTexto()) === 'claude') {
+        const child = spawn('claude', ['-p', '--model', modelo, '--output-format', 'stream-json', '--include-partial-messages', '--verbose'], { shell: process.platform === 'win32', stdio: ['pipe', 'pipe', 'ignore'] })
+        child.stdin.end(prompt(it, i))
+        res = await pipeClaude(child.stdout, st.id)
+      } else {
+        // Cerebras / Groq: la sección llega entera en un par de segundos.
+        const r = await pedirLLM(prompt(it, i), modelo)
+        const txt = r.is_error ? '' : String(r.result ?? '').trim().replace(/^```(?:markdown|md)?\s*\n([\s\S]*?)\n```$/, '$1')
+        if (txt) await call('POST', '/v1/stream/chunk', { id: st.id, text: txt })
+        res = r.is_error ? { error: String(r.result) } : { chars: txt.length }
+      }
       if (res.error || !res.chars) {
         // El hueco vuelve (con el motivo) para poder reintentar esa parte.
         const why = (res.error ?? 'el modelo no ha devuelto texto').replace(/"/g, "'").slice(0, 120)
@@ -782,14 +827,7 @@ switch (cmd) {
         guia,
         'Devuelve SOLO el Markdown que sustituye a ese bloque entero (puede ser más de un bloque si hay que añadir algo; conserva lo que no se pide cambiar, el estilo y el idioma: español de España). Si hay que quitar el bloque entero, devuelve solo la palabra ELIMINAR. Sin explicaciones ni bloques de código alrededor. No inventes cifras.'
       ].join('\n')
-      const outp = await new Promise((ok) => {
-        const child = spawn('claude', ['-p', '--model', modelo, '--output-format', 'json'], { shell: process.platform === 'win32', stdio: ['pipe', 'pipe', 'pipe'] })
-        let o = ''
-        child.stdout.on('data', (d) => (o += d))
-        child.on('error', (e) => ok(JSON.stringify({ is_error: true, result: String(e) })))
-        child.on('close', () => ok(o))
-        child.stdin.end(pedir)
-      })
+      const outp = JSON.stringify(await pedirLLM(pedir, modelo))
       let res
       try { res = JSON.parse(outp) } catch { res = { is_error: true, result: String(outp).slice(0, 160) || 'sin respuesta' } }
       if (res.is_error) {
@@ -844,6 +882,62 @@ switch (cmd) {
     for (const c of r.capturas) print(`  pág. ${c.page}: ${c.file}`)
     break
   }
+  // ─── Proveedores de modelos ───
+  case 'proveedores': {
+    const r = await call('GET', '/v1/proveedores')
+    if (opt.json) { out(r); break }
+    print(`Por defecto: ${r.porDefecto} · imágenes con IA: ${r.imagenesIA ? 'activadas (de pago)' : 'apagadas'}`)
+    for (const p of r.proveedores) print(`  ${p.configurado ? '✓' : '·'} ${p.id.padEnd(9)} ${p.modelo.padEnd(22)} ${p.uso}`)
+    print('Configurar: buho-docs proveedor <id> --env archivo.env [--variable NOMBRE] | --clave …  ·  --defecto  ·  openai --imagenes si|no')
+    break
+  }
+  case 'proveedor': {
+    const id = args[0]
+    if (!id) die('Uso: buho-docs proveedor <cerebras|groq|openai|claude> [--env archivo.env --variable NOMBRE | --clave …] [--defecto] [--imagenes si|no]')
+    if (typeof opt.env === 'string' || typeof opt.clave === 'string') await call('POST', '/v1/proveedor-clave', { proveedor: id, env: typeof opt.env === 'string' ? R(opt.env) : undefined, variable: opt.variable, clave: opt.clave })
+    if (opt.defecto || typeof opt.imagenes === 'string') await call('POST', '/v1/proveedores', { ...(opt.defecto ? { porDefecto: id } : {}), ...(typeof opt.imagenes === 'string' ? { imagenesIA: /^(si|sí|true|1)$/i.test(opt.imagenes) } : {}) })
+    const r = await call('GET', '/v1/proveedores')
+    const p = r.proveedores.find((x) => x.id === id)
+    opt.json ? out(r) : print(`${id}: ${p?.configurado ? 'configurado' : 'sin clave'}${r.porDefecto === id ? ' · por defecto' : ''}${id === 'openai' ? ` · imágenes con IA ${r.imagenesIA ? 'activadas' : 'apagadas'}` : ''}`)
+    break
+  }
+  // ─── Imágenes ───
+  case 'imagenes': {
+    const sub = args[0]
+    if (sub === 'buscar') {
+      const q = args.slice(1).join(' ')
+      if (!q) die('Uso: buho-docs imagenes buscar "qué buscas" [--n 8] [--forma horizontal|vertical|cuadrada]')
+      const r = await call('POST', '/v1/imagenes/buscar', { q, n: opt.n, forma: opt.forma, tamano: opt.tamano })
+      if (opt.json) { out(r); break }
+      if (!r.items.length) { print(r.message); break }
+      print(`Búsqueda ${r.id} · ${r.items.length} imágenes con licencia de uso comercial (Openverse)`)
+      print(`Hoja de contactos (MÍRALA antes de elegir): ${r.hoja}`)
+      for (const it of r.items) print(`  ${String(it.n).padStart(2)}. ${it.ancho}×${it.alto} · ${it.licencia} · ${it.autor.slice(0, 24)} · «${it.titulo.slice(0, 50)}»`)
+      print(`Ponla con: buho-docs imagenes poner <doc> ${r.id} <n> [--seccion "Título" | --bloque #id | --hueco id] [--ancho 70]`)
+      break
+    }
+    if (sub === 'poner') {
+      const path = R(args[1] ?? die('Uso: buho-docs imagenes poner <doc> <búsqueda> <n> [--seccion "Título"] [--ancho 70]'))
+      const r = await call('POST', '/v1/imagenes/poner', { path, busqueda: args[2], n: args[3], seccion: opt.seccion, bloque: opt.bloque, hueco: opt.hueco, ancho: opt.ancho, alt: opt.alt, author: author() })
+      if (opt.json) { out(r); break }
+      print(`Imagen puesta: ${r.archivo}${r.w ? ` (${r.w}×${r.h})` : ''}${r.aviso ? '\n  aviso: ' + r.aviso : ''}`)
+      avisosPaginas({ ...r, changed: true })
+      break
+    }
+    if (sub === 'generar') {
+      const path = R(args[1] ?? die('Uso: buho-docs imagenes generar <doc> "qué imagen" [--seccion "Título"] [--ancho 80]   (de pago; actívalo antes)'))
+      const prompt = args.slice(2).join(' ') || (typeof opt.text === 'string' ? opt.text : '')
+      if (!prompt) die('Falta qué imagen generar')
+      io.err('Generando la imagen (OpenAI, de pago)…\n')
+      const r = await call('POST', '/v1/imagenes/generar', { path, prompt, seccion: opt.seccion, bloque: opt.bloque, hueco: opt.hueco, ancho: opt.ancho, alt: opt.alt, tamano: opt.tamano, calidad: opt.calidad, author: author() })
+      if (opt.json) { out(r); break }
+      print(`Imagen generada (${r.modelo}): ${r.archivo}`)
+      avisosPaginas({ ...r, changed: true })
+      break
+    }
+    die('Uso: buho-docs imagenes buscar|poner|generar …')
+    break
+  }
   // ─── Aire IA ───
   case 'estilo': {
     const r = await call('GET', '/v1/estilo' + qs({ path: file(0) }))
@@ -885,14 +979,7 @@ switch (cmd) {
         '>>>',
         'Devuelve SOLO el Markdown reescrito, sin explicaciones ni bloques de código alrededor. Español de España.'
       ].join('\n')
-      const salida = await new Promise((ok) => {
-        const child = spawn('claude', ['-p', '--model', modelo, '--output-format', 'json'], { shell: process.platform === 'win32', stdio: ['pipe', 'pipe', 'pipe'] })
-        let o = ''
-        child.stdout.on('data', (d) => (o += d))
-        child.on('error', (e) => ok(JSON.stringify({ is_error: true, result: String(e) })))
-        child.on('close', () => ok(o))
-        child.stdin.end(pedir)
-      })
+      const salida = JSON.stringify(await pedirLLM(pedir, modelo))
       let res
       try { res = JSON.parse(salida) } catch { res = { is_error: true, result: String(salida).slice(0, 160) || 'sin respuesta' } }
       if (res.is_error) { fallos.push(String(res.result)); io.err(`  ✗ #${bloque.id} · ${String(res.result).slice(0, 100)}\n`); return }
@@ -945,14 +1032,7 @@ switch (cmd) {
         'No inventes cifras ni estudios. Devuelve SOLO el Markdown, sin explicaciones ni bloques de código alrededor.'
       ].filter(Boolean).join('\n')
       const t = Date.now()
-      const salida = await new Promise((ok) => {
-        const child = spawn('claude', ['-p', '--model', modelo, '--output-format', 'json'], { shell: process.platform === 'win32', stdio: ['pipe', 'pipe', 'pipe'] })
-        let o = ''
-        child.stdout.on('data', (d) => (o += d))
-        child.on('error', (e) => ok(JSON.stringify({ is_error: true, result: String(e) })))
-        child.on('close', () => ok(o))
-        child.stdin.end(pedir)
-      })
+      const salida = JSON.stringify(await pedirLLM(pedir, modelo))
       let res
       try { res = JSON.parse(salida) } catch { res = { is_error: true, result: String(salida).slice(0, 160) || 'sin respuesta' } }
       if (res.is_error) return { k, modelo, enfoque, error: String(res.result) }

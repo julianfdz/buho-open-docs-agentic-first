@@ -1089,3 +1089,12 @@ button.link:hover {
   color: var(--accent-d);
 }
 .rev-sum { font-size: 12px; margin: 2px 0 6px; }
+
+.zoom-ctl {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+.zoom-ctl .stat-btn {
+  min-width: 14px;
+}

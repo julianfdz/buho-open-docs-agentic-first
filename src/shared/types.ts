@@ -64,6 +64,8 @@ export interface Settings {
   spellcheck: boolean
   /** Ya se ha pasado a la vista de página (0.4): solo una vez, luego manda lo que elija la persona. */
   vistaPagina?: boolean
+  /** Zoom de la vista (1 = 100 %); sin valor, la página se ajusta al ancho. */
+  zoom?: number | null
 }
 
 export const DEFAULT_SETTINGS: Settings = { theme: 'light', autosave: true, view: 'preview', fontSize: 14, spellcheck: true, vistaPagina: true }

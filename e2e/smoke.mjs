@@ -65,7 +65,7 @@ try {
   await page.waitForSelector('.status .pill')
   check((await page.locator('.tab.on').innerText()).includes('Beneficios'), 'El CLI abre el documento en una pestaña')
   await until(async () => /páginas/.test(await page.locator('.status').innerText()))
-  check(/3 páginas/.test(await page.locator('.status').innerText()), `Vista previa paginada: ${(await page.locator('.status').innerText()).match(/\d+ páginas/)?.[0]}`)
+  check(/5 páginas/.test(await page.locator('.status').innerText()), `Vista previa paginada: ${(await page.locator('.status').innerText()).match(/\d+ páginas/)?.[0]}`)
   await page.screenshot({ path: join(out, '02-documento.png') })
 
   // Esquema y lectura para agentes.
@@ -417,6 +417,17 @@ try {
   const idP = lp.text.match(/\[#(b[a-z0-9]+)\] Párrafo para editar/)?.[1]
   const ed = await cliJson('editar', join(out, 'ancho.md'), '#' + idP, '--text', 'Párrafo ya editado.')
   check(ed.id && ed.id !== idP && (await cliJson('leer', join(out, 'ancho.md'), '--ids')).text.includes('[#' + ed.id + '] Párrafo ya editado.'), 'editar devuelve el id nuevo del bloque')
+
+  // Cada sección (##) empieza en página nueva; con «secciones: seguidas», no.
+  const secs = ['---', 'tipo: documento', 'titulo: "S"', 'portada: false', '---', '', '## Uno', '', 'Texto corto.', '', '## Dos', '', 'Otro texto.', '']
+  writeFileSync(join(out, 'secs.md'), secs.join(String.fromCharCode(10)))
+  check((await cliJson('check', join(out, 'secs.md'))).pages === 2, 'Cada sección empieza en una página nueva')
+  writeFileSync(join(out, 'secs2.md'), secs.join(String.fromCharCode(10)).replace('portada: false', 'portada: false' + String.fromCharCode(10) + 'secciones: seguidas'))
+  check((await cliJson('check', join(out, 'secs2.md'))).pages === 1, 'Con «secciones: seguidas» van en la misma página')
+
+  // Proveedores: claude siempre; cerebras, groq y openai según claves (nunca se devuelven).
+  const pv = await cliJson('proveedores')
+  check(pv.proveedores.some((x) => x.id === 'claude' && x.configurado) && !JSON.stringify(pv).match(/csk-|gsk_|sk-/), 'proveedores: lista sin enseñar claves')
 
   // Clic en la vista → el editor va a esa línea.
   await cli('open', doc)

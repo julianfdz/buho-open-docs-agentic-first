@@ -44,6 +44,16 @@ Lo que el usuario recibe no puede sonar a texto generado. Escribe como una perso
 
 `buho-docs estilo <doc>` lo detecta (determinista, con línea, bloque `#id` y qué hacer) y `scan` lo cuenta. `buho-docs humanizar <doc>` lanza un agente por bloque afectado, a la vez, y lo reescribe sin cambiar el contenido (deja propuestas; `--directo` para escribirlo). `generar`, `torneo`, `atender` y `humanizar` ya llevan esta guía en sus instrucciones.
 
+## 0.3 Modo muy rápido, imágenes y maquetación
+
+**Modelos.** Por defecto los agentes de `generar`, `torneo`, `atender` y `humanizar` usan Claude (`claude -p`). Con **`--mega`** usan Cerebras o Groq (gpt-oss-120b): un documento de 7-8 páginas en ~2 s en vez de ~40 s. Úsalo para borradores, variantes de torneo o pruebas; para el texto final que importa, Claude o un torneo con los dos. `--proveedor claude|cerebras|groq` elige uno; `buho-docs proveedores` dice qué hay configurado (las claves nunca se enseñan; se cargan con `buho-docs proveedor cerebras --env archivo.env`).
+
+**Imágenes de banco (gratis, con licencia).** `buho-docs imagenes buscar "consulta en inglés" --forma horizontal` devuelve fotos con licencia de uso comercial (Openverse: CC0, CC BY…) y una **hoja de contactos**: ábrela y mírala antes de elegir (que la foto cuente algo de la sección, sin texto incrustado ni marcas). `buho-docs imagenes poner <doc> <búsqueda> <n> --hueco id` (o `--seccion "Título"` / `--bloque #id`, `--ancho 80`) la descarga a `imagenes/` junto al documento, la reduce si es enorme y añade el pie con autor, licencia y origen. Si avisa de poca resolución, ponla más pequeña. Luego `revisar` para ver cómo queda en la página. Truco: deja `::: hueco id=foto-x texto="…"` mientras escribes y rellénalo después.
+
+**Imágenes generadas (de pago, apagado).** `buho-docs imagenes generar <doc> "descripción"` usa OpenAI (gpt-image, ~0,05-0,10 $ por imagen). Está apagado; solo si el usuario lo pide: `buho-docs proveedor openai --imagenes si`. El pie dice «Imagen generada con IA».
+
+**Secciones en página nueva.** En los documentos A4 cada `##` empieza arriba de una página nueva (nunca a mitad ni al final). Por eso una sección corta deja media página libre: escribe secciones de una página o junta las cortas bajo un mismo `##` con `###`. Si el usuario prefiere que vayan seguidas: `secciones: seguidas` en la cabecera.
+
 ## 0.2 Torneo: varias versiones y eliges la mejor
 
 Para las partes que importan (la respuesta corta, el resumen ejecutivo, la portada de un deck, una sección floja), en vez de una versión pide varias a la vez y quédate con la mejor:

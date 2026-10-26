@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, net, protocol, session, shell } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, net, protocol, session, shell } from 'electron'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, extname, join, resolve } from 'node:path'
@@ -10,7 +10,9 @@ import { changedLines, unified } from '@shared/diff'
 import { CONTAINERS, LAYOUTS } from '@shared/syntax'
 import * as docs from './docs'
 import { historyBefore, historyEntry, listHistory, tagNextChange } from './history'
-import { checkDoc, closeExporter, exportPdf, inspect, mosaico, pagesText, rasterizar, snapshot } from './exporter'
+import { checkDoc, closeExporter, exportPdf, hojaContactos, inspect, mosaico, pagesText, rasterizar, snapshot } from './exporter'
+import * as proveedores from './proveedores'
+import { imageSize } from './exportar-word'
 import { template } from './templates'
 import { editBlock, readClean, search, type BlockEditMode } from '@shared/index-ai'
 import { indexOf, mdFiles } from './indexcache'
@@ -135,6 +137,51 @@ function comentarioInfo(target: string, content: string, c: import('@shared/prop
   const b = linea ? indexOf(target, content).blocks.find((x) => x.line <= linea && x.end >= linea && x.type !== 'diapositiva') : undefined
   const md = b ? content.split(/\r?\n/).slice(b.line - 1, b.end).join('\n') : undefined
   return { ...c, ahora: linea, bloque: b ? { id: b.id, line: b.line, end: b.end, seccion: b.path, markdown: md } : null }
+}
+
+/** Búsquedas de imágenes recientes (para elegir luego por número). */
+const busquedas = new Map<string, { n: number; titulo: string; autor: string; licencia: string; licenciaUrl: string; fuente: string; pagina: string; url: string; thumb: string; ancho: number; alto: number }[]>()
+const slug = (t: string): string => t.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'imagen'
+
+/** Mete una imagen (ya descargada o generada) en el documento, con su pie de créditos. */
+async function ponerImagen(target: string, datos: Buffer, ext: string, nombre: string, p: Record<string, unknown>, credito: string, autor: string): Promise<object> {
+  const s = (k: string): string | undefined => (p[k] === undefined || p[k] === null || p[k] === '' ? undefined : String(p[k]))
+  const dir = join(dirname(target), 'imagenes')
+  mkdirSync(dir, { recursive: true })
+  let file = join(dir, `${slug(nombre)}.${ext}`)
+  for (let i = 2; existsSync(file); i++) file = join(dir, `${slug(nombre)}-${i}.${ext}`)
+  // Fotos enormes (5.000-7.000 px de banco): a 2.000 px, que para imprimir sobra y pesa diez veces menos.
+  const img = nativeImage.createFromBuffer(datos)
+  if (!img.isEmpty() && img.getSize().width > 2200) {
+    datos = img.resize({ width: 2000, quality: 'best' }).toJPEG(86)
+    file = file.replace(/.(png|jpe?g)$/i, '.jpg')
+  }
+  writeFileSync(file, datos)
+  const rel = 'imagenes/' + basename(file)
+  const ancho = s('ancho') ? `{width=${s('ancho')!.replace(/%?$/, '%')}}` : ''
+  const alt = (s('alt') ?? nombre).replace(/[[\]]/g, '')
+  const md = `![${alt}](${rel})${ancho}${credito ? `\n\n::: nota\n${credito}\n:::` : ''}`
+  const r = await docs.applyChange(
+    target,
+    (src) => {
+      if (s('hueco')) return fillHole(src, s('hueco')!, md)
+      if (s('bloque')) return editBlock(src, s('bloque')!.replace(/^#/, ''), 'after', md)
+      if (s('seccion')) {
+        // Tras el primer párrafo de la sección (no al final, donde se pierde).
+        const sec = findSection(src, s('seccion')!)
+        const L = src.split(/\r?\n/)
+        let k = sec.start + 1
+        while (k < sec.end && !L[k].trim()) k++
+        while (k < sec.end && L[k].trim()) k++
+        return [...L.slice(0, k), '', md, ...L.slice(k)].join('\n')
+      }
+      return src.replace(/\s*$/, '') + '\n\n' + md + '\n'
+    },
+    { kind: 'ai', author: autor, summary: `Imagen «${alt}»` }
+  )
+  const dim = imageSize(datos)
+  const res = await tocadas(target, r.antes ?? '', r.content)
+  return { ok: true, path: target, archivo: file, ...dim, ...res, ...(dim && dim.w < 1200 ? { aviso: `Imagen de ${dim.w} px de ancho: puede verse borrosa a página completa (úsala más pequeña, {width=50%})` } : {}) }
 }
 
 /** Última versión revisada de cada documento (para «revisar --cambiadas»). */
@@ -570,6 +617,76 @@ async function apiCall(method: string, p: Record<string, unknown>): Promise<unkn
       const conAvisos = info.pages.filter((pg) => pg.avisos.length).map((pg) => ({ n: pg.n, llenado: pg.llenado, avisos: pg.avisos }))
       const aire = aireIA(src).length
       return { ok: true, path: target, kind: info.kind, total: info.pages.length, aireIA: aire, limpio: !conAvisos.length, problemas: conAvisos.reduce((k, x) => k + x.avisos.length, 0), paginas: conAvisos, llenado: info.pages.map((pg) => pg.llenado), mosaicos, capturas }
+    }
+    // ─── Proveedores de modelos (claude, cerebras, groq; openai solo imágenes) ───
+    case 'proveedores': {
+      if (s('porDefecto') || p.imagenesIA !== undefined) proveedores.configurar({ porDefecto: s('porDefecto') as proveedores.ProveedorId | undefined, imagenesIA: p.imagenesIA === undefined ? undefined : p.imagenesIA === true || p.imagenesIA === 'true' || p.imagenesIA === 'si' })
+      return { ok: true, ...proveedores.estado() }
+    }
+    case 'proveedorClave':
+      proveedores.guardarClave(need('proveedor', 'cerebras, groq u openai') as proveedores.ProveedorId, { clave: s('clave'), envFile: s('env') ? resolve(s('env')!) : undefined, variable: s('variable') })
+      return { ok: true, ...proveedores.estado() }
+    case 'llm':
+      try {
+        const r = await proveedores.completar(need('proveedor', 'cerebras o groq') as proveedores.ProveedorId, need('prompt', 'instrucciones'), s('modelo'), Number(s('max')) || 4000)
+        return { ok: true, ...r }
+      } catch (e) {
+        return { ok: false, error: (e as Error).message }
+      }
+    // ─── Imágenes: banco con licencia (Openverse) o generadas con IA (de pago, apagado) ───
+    case 'imagenesBuscar': {
+      const q = need('q', 'qué imagen buscas')
+      const n = Math.min(20, Number(s('n')) || 8)
+      const u = new URL('https://api.openverse.org/v1/images/')
+      u.searchParams.set('q', q)
+      u.searchParams.set('license_type', 'commercial')
+      u.searchParams.set('mature', 'false')
+      u.searchParams.set('page_size', String(n))
+      u.searchParams.set('size', s('tamano') ?? 'large')
+      if (s('forma')) u.searchParams.set('aspect_ratio', { horizontal: 'wide', vertical: 'tall', cuadrada: 'square' }[s('forma')!] ?? s('forma')!)
+      const r = await fetch(u, { headers: { 'user-agent': 'BuhoDocs/1.0' } })
+      if (!r.ok) throw new Error(`El banco de imágenes no responde (${r.status})`)
+      const j = (await r.json()) as { results: { title?: string; creator?: string; license: string; license_version?: string; license_url?: string; source?: string; foreign_landing_url?: string; url: string; thumbnail?: string; width?: number; height?: number }[] }
+      const items = j.results.map((x, i) => ({
+        n: i + 1,
+        titulo: (x.title ?? '').slice(0, 80),
+        autor: x.creator ?? 'autor desconocido',
+        licencia: x.license === 'cc0' ? 'CC0 (dominio público)' : x.license === 'pdm' ? 'Dominio público' : `CC ${x.license.toUpperCase()} ${x.license_version ?? ''}`.trim(),
+        licenciaUrl: x.license_url ?? '',
+        fuente: x.source ?? 'openverse',
+        pagina: x.foreign_landing_url ?? '',
+        url: x.url,
+        thumb: x.thumbnail ?? x.url,
+        ancho: x.width ?? 0,
+        alto: x.height ?? 0
+      }))
+      if (!items.length) return { ok: true, id: null, items: [], message: 'Sin resultados: prueba otras palabras (en inglés suele haber más)' }
+      const id = 'i' + Date.now().toString(36)
+      busquedas.set(id, items)
+      const png = await hojaContactos(items.map((x) => ({ n: x.n, thumb: x.thumb, pie: `${x.ancho}×${x.alto} · ${x.licencia} · ${x.autor}` })))
+      const hoja = join(tmpdir(), 'buho-docs', 'imagenes', `${id}.png`)
+      mkdirSync(dirname(hoja), { recursive: true })
+      writeFileSync(hoja, png)
+      return { ok: true, id, hoja, items }
+    }
+    case 'imagenPoner': {
+      const target = path()
+      const lista = busquedas.get(need('busqueda', 'id de la búsqueda (imagenes buscar)'))
+      if (!lista) throw new Error('Esa búsqueda ya no está: vuelve a buscar')
+      const it = lista.find((x) => x.n === Number(need('n', 'número de la imagen')))
+      if (!it) throw new Error(`No hay imagen ${s('n')} en esa búsqueda`)
+      const r = await fetch(it.url, { headers: { 'user-agent': 'BuhoDocs/1.0' } })
+      if (!r.ok) throw new Error(`No se pudo descargar la imagen (${r.status})`)
+      const datos = Buffer.from(await r.arrayBuffer())
+      const ext = /png/.test(r.headers.get('content-type') ?? '') ? 'png' : 'jpg'
+      const credito = `Foto: «${it.titulo || 'sin título'}», de ${it.autor} · ${it.licencia} · vía ${it.fuente}${it.pagina ? ` ([origen](${it.pagina}))` : ''}`
+      return ponerImagen(target, datos, ext, s('alt') ?? it.titulo, p, credito, s('author') ?? 'IA')
+    }
+    case 'imagenGenerar': {
+      const target = path()
+      const prompt = need('prompt', 'qué imagen generar')
+      const g = await proveedores.generarImagen(prompt, s('tamano') ?? '1536x1024', s('calidad') ?? 'medium')
+      return { ...(await ponerImagen(target, g.png, 'png', s('alt') ?? prompt.slice(0, 40), p, s('sinPie') ? '' : 'Imagen generada con IA.', s('author') ?? 'IA')), modelo: g.modelo }
     }
     // ─── Aire IA: frases y costumbres de texto generado ───
     case 'guiaEstilo':

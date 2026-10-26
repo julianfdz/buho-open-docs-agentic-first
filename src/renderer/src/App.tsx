@@ -61,6 +61,14 @@ export default function App(): React.JSX.Element {
   const [histRefresh, setHistRefresh] = useState(0)
   // Revisión: comentarios y propuestas del documento activo; modo «comentar» en la página.
   const [rev, setRev] = useState<RevEstado | null>(null)
+  // Zoom de la vista: lo que se pide (y se recuerda) y lo que hay de verdad.
+  const [zoomPedido, setZoomPedido] = useState<{ valor: number | null; nonce: number } | null>(null)
+  const [zoomReal, setZoomReal] = useState(1)
+  const zoomRef = useRef(1)
+  zoomRef.current = zoomReal
+  const pedirZoom = (valor: number | null): void => setZoomPedido({ valor, nonce: ++nonce })
+  const pedirZoomRef = useRef(pedirZoom)
+  pedirZoomRef.current = pedirZoom
   const [revTick, setRevTick] = useState(0)
   const [comentando, setComentando] = useState(false)
   const [revDraft, setRevDraft] = useState<{ line: number; cita: string; seleccion?: string; nonce: number } | null>(null)
@@ -478,6 +486,12 @@ export default function App(): React.JSX.Element {
     const onKey = (e: KeyboardEvent): void => {
       if (!(e.ctrlKey || e.metaKey)) return
       const k = e.key.toLowerCase()
+      // Zoom de la página también con el foco fuera de ella.
+      if (k === '+' || k === '=' || k === '-' || k === '0') {
+        e.preventDefault()
+        pedirZoomRef.current(k === '0' ? null : zoomRef.current * (k === '-' ? 1 / 1.1 : 1.1))
+        return
+      }
       if (k === 'o') {
         e.preventDefault()
         void openDialog()
@@ -671,6 +685,11 @@ export default function App(): React.JSX.Element {
                   tema={temaPkg}
                   marcas={revMarcas}
                   comentando={comentando}
+                  zoom={zoomPedido ?? (settings.zoom ? { valor: settings.zoom, nonce: 0 } : null)}
+                  onZoom={(m) => {
+                    setZoomReal(m.real)
+                    if (m.zoom !== (settings.zoom ?? null)) updateSettings({ zoom: m.zoom })
+                  }}
                   onVisual={onVisual}
                   onRendered={setRender}
                   onPick={(m) => {
@@ -725,6 +744,13 @@ export default function App(): React.JSX.Element {
         {tab ? (
           <>
             <span className="pill">{kind === 'presentacion' ? 'Presentación 16:9' : 'Documento A4'}</span>
+            {view !== 'editor' && (
+              <span className="zoom-ctl" title="Zoom de la página (Ctrl + rueda, Ctrl + / Ctrl −, Ctrl 0 para ajustar al ancho)">
+                <button className="stat-btn" onClick={() => pedirZoom(zoomRef.current / 1.1)}>−</button>
+                <button className="stat-btn" onClick={() => pedirZoom(null)}>{settings.zoom ? `${Math.round(zoomReal * 100)} %` : `Ajustar (${Math.round(zoomReal * 100)} %)`}</button>
+                <button className="stat-btn" onClick={() => pedirZoom(zoomRef.current * 1.1)}>+</button>
+              </span>
+            )}
             {render && <span>{render.pages} {kind === 'presentacion' ? (render.pages === 1 ? 'diapositiva' : 'diapositivas') : render.pages === 1 ? 'página' : 'páginas'}</span>}
             <span>{wordCount(tab.content).toLocaleString('es-ES')} palabras</span>
             {render && render.warnings.length > 0 && (

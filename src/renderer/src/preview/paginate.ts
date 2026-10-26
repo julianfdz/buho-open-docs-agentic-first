@@ -19,6 +19,8 @@ export interface PageChrome {
   pie: string
   pieDer?: string
   nota?: string
+  /** Cada sección (##) empieza en página nueva: nunca a mitad ni al final de una. */
+  seccionNueva?: boolean
 }
 
 const esc = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -204,6 +206,13 @@ export function paginate(content: DocumentFragment, host: HTMLElement, chrome: P
         box = body(pg)
       }
       continue
+    }
+    // Una sección (##) no empieza a mitad ni al final de página: siempre arriba de una nueva.
+    // (el título puede venir envuelto en .keep, unido a su primer párrafo)
+    const esSeccion = el.tagName === 'H2' || (el.classList.contains('keep') && el.firstElementChild?.tagName === 'H2')
+    if (chrome.seccionNueva && esSeccion && box.children.length) {
+      pg = newPage(host, chrome)
+      box = body(pg)
     }
     box.appendChild(el)
     if (!overflows(box)) continue
