@@ -584,6 +584,7 @@ switch (cmd) {
         presentacion
           ? '{"titulo": "…", "contexto": "para quién es y con qué tono, en una frase", "diapositivas": [{"titulo": "…", "etiqueta": "EN MAYÚSCULAS", "diseno": "portada|normal|seccion|cierre", "pide": "qué debe contar, concreto"}]} (la primera con diseno portada y la última cierre)'
           : '{"titulo": "…", "subtitulo": "…", "etiqueta": "TEMA · SUBTEMA EN MAYÚSCULAS", "contexto": "para quién es y con qué tono, en una frase", "secciones": [{"titulo": "1. …", "pide": "qué debe contar, concreto, en una o dos frases"}]}',
+        'El «titulo» es el que leerá el destinatario en la portada: concreto y atractivo, sobre el tema. Nunca el tipo de documento ni palabras del encargo («lead magnet», «guía para…», «documento de…»), ni una sección de «introducción al documento».',
         'Los títulos de sección, numerados y cortos. Que las partes no se solapen.'
       ].join('\n')
       const out = JSON.stringify(await pedirLLM(pedir, opt['modelo-plan'] ?? 'haiku'))
@@ -673,7 +674,7 @@ switch (cmd) {
         deck && /^(portada|cierre|seccion|cita)$/i.test(it.diseno ?? '') ? breve : sintaxis.replace('${palabras}', String(it.palabras ?? plan.palabras ?? 450)),
         'Iconos válidos: reloj, check, equipo, ventas, datos, escudo, objetivo, cerebro, ley, alerta, bombilla, dinero, soporte, robot.',
         guiaEstilo,
-        'No inventes cifras, estudios ni porcentajes concretos. No repitas el título. Devuelve solo el Markdown, sin bloques de código alrededor ni comentarios.'
+        'No inventes cifras, estudios, porcentajes, casos de centros o empresas concretas, ni nombres de productos o herramientas que no existan; si no tienes un dato real, explica sin cifras. No empieces con un título (ya está puesto). Devuelve solo el Markdown, sin bloques de código alrededor ni comentarios.'
       ]
         .filter(Boolean)
         .join('\n')

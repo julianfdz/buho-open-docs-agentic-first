@@ -138,7 +138,8 @@ const pascal = (s: string): string =>
 const esc = (v: string): string => v.replace(/&/g, '&amp;').replace(/"/g, '&quot;')
 
 export function iconSvg(name: string): string | null {
-  const key = name.trim().toLowerCase()
+  // Sin tildes: «relój», «gráfico» o «Teléfono» valen igual que «reloj», «grafico», «telefono».
+  const key = name.trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
   const node = (icons as Record<string, [string, Record<string, string | number>][]>)[pascal(ALIAS[key] ?? key)]
   if (!node) return null
   const inner = node.map(([tag, attrs]) => `<${tag} ${Object.entries(attrs).map(([k, v]) => `${k}="${esc(String(v))}"`).join(' ')}/>`).join('')

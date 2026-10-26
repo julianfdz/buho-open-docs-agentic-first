@@ -663,7 +663,22 @@ async function apiCall(method: string, p: Record<string, unknown>): Promise<unkn
       if (!items.length) return { ok: true, id: null, items: [], message: 'Sin resultados: prueba otras palabras (en inglés suele haber más)' }
       const id = 'i' + Date.now().toString(36)
       busquedas.set(id, items)
-      const png = await hojaContactos(items.map((x) => ({ n: x.n, thumb: x.thumb, pie: `${x.ancho}×${x.alto} · ${x.licencia} · ${x.autor}` })))
+      // Las miniaturas se descargan aquí (con tiempo límite y la original si falla la miniatura) y van incrustadas:
+      // el servicio de miniaturas del banco a veces no responde y la hoja saldría vacía.
+      const traer = async (u: string, ms: number): Promise<string | null> => {
+        try {
+          const r = await fetch(u, { headers: { 'user-agent': 'BuhoDocs/1.0 (+https://buhoai.es)' }, signal: AbortSignal.timeout(ms) })
+          if (!r.ok || !/^image\//.test(r.headers.get('content-type') ?? '')) return null
+          let buf: Buffer = Buffer.from(await r.arrayBuffer())
+          const im = nativeImage.createFromBuffer(buf)
+          if (!im.isEmpty() && im.getSize().width > 600) buf = im.resize({ width: 480, quality: 'good' }).toJPEG(80)
+          return 'data:image/jpeg;base64,' + buf.toString('base64')
+        } catch {
+          return null
+        }
+      }
+      const vistas = await Promise.all(items.map(async (x) => (await traer(x.thumb, 8000)) ?? (await traer(x.url, 15000))))
+      const png = await hojaContactos(items.map((x, k) => ({ n: x.n, thumb: vistas[k] ?? '', pie: `${vistas[k] ? '' : '(sin vista previa) '}${x.ancho}×${x.alto} · ${x.licencia} · ${x.autor}` })))
       const hoja = join(tmpdir(), 'buho-docs', 'imagenes', `${id}.png`)
       mkdirSync(dirname(hoja), { recursive: true })
       writeFileSync(hoja, png)
