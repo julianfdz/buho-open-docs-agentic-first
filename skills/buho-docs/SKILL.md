@@ -32,7 +32,19 @@ El bucle, siempre:
 
 **Si orquestas varios agentes** (subagentes, sesiones de Claude, Codex…): cada uno revisa las páginas que ha tocado (`revisar`) y el agente principal hace el `scan` final y reparte los arreglos. Con `--json` todo trae `paginas`, `avisos` (`tipo`, `nivel`, `linea`, `mensaje`) y las rutas de las capturas.
 
-## 0.1 Torneo: varias versiones y eliges la mejor
+## 0.1 Sin «aire IA»
+
+Lo que el usuario recibe no puede sonar a texto generado. Escribe como una persona experta que va al grano:
+- Sin aperturas grandilocuentes («en el mundo actual», «hoy en día»), sin conectores de relleno al empezar frase («Además,», «Asimismo,», «En este sentido,») y sin cierres de redacción («En resumen», «En conclusión»).
+- Sin muletillas («cabe destacar», «es importante señalar»), verbos de folleto (revolucionar, potenciar, desbloquear, llevar al siguiente nivel) ni palabras comodín (sinergia, holístico, disruptivo, de vanguardia, ecosistema, robusto, innovador).
+- Nada de «no es solo X, sino Y», «¿El resultado? …», «Imagina que…», «juega un papel clave», «marca la diferencia».
+- Sin rayas (—) como pausa, sin exclamaciones ni emojis. Una negrita por párrafo como mucho. No todas las viñetas con «**Algo:** explicación». Títulos cortos y llanos, sin «Algo: la clave de algo».
+- Datos concretos en vez de adjetivos (horas, euros, plazos, tareas con nombre). Si una frase no aporta, fuera.
+- Tampoco lo encajes todo en tarjetas y cajas: la prosa bien escrita también es diseño.
+
+`buho-docs estilo <doc>` lo detecta (determinista, con línea, bloque `#id` y qué hacer) y `scan` lo cuenta. `buho-docs humanizar <doc>` lanza un agente por bloque afectado, a la vez, y lo reescribe sin cambiar el contenido (deja propuestas; `--directo` para escribirlo). `generar`, `torneo`, `atender` y `humanizar` ya llevan esta guía en sus instrucciones.
+
+## 0.2 Torneo: varias versiones y eliges la mejor
 
 Para las partes que importan (la respuesta corta, el resumen ejecutivo, la portada de un deck, una sección floja), en vez de una versión pide varias a la vez y quédate con la mejor:
 
@@ -120,8 +132,10 @@ buho-docs responder <doc.md> <id> "…" [--resolver]
 buho-docs atender <doc.md> [--directo]          # un agente por bloque comentado, en paralelo
 buho-docs revisar <doc.md> [páginas]            # capturas y avisos de lo cambiado (§0)
 buho-docs scan <doc.md> [--capturas]            # todo el documento: avisos y mosaico
-buho-docs torneo <doc.md> --seccion "T" --n 3   # varias versiones a la vez (§0.1)
+buho-docs torneo <doc.md> --seccion "T" --n 3   # varias versiones a la vez (§0.2)
 buho-docs elegir <doc.md> <propuesta>           # quedarse con una variante
+buho-docs estilo <doc.md>                       # aire IA: dónde y qué hacer
+buho-docs humanizar <doc.md> [--directo]        # quitarlo con agentes en paralelo
 buho-docs nuevo [nombre] [--plantilla id] [--tema id] [--file c.md]  # borrador sin guardar → imprime su ruta
 buho-docs guardar <borrador.md> <destino.md>    # guardar un borrador
 buho-docs history <doc.md> | diff <doc.md> [id] | restore <doc.md> <id>
@@ -266,6 +280,31 @@ Introducción a la IA
 | Ventas | 85 |
 :::
 ```
+
+**Fórmulas, código, diagramas y SVG** (salen igual en la vista y en el PDF; en Word y PowerPoint como imagen nítida):
+
+````markdown
+El coste es $C = \frac{t \cdot p}{10^6}$ por consulta.        ← fórmula en línea (LaTeX)
+
+$$
+A = 12 \sum_{i=1}^{n} h_i \cdot c_i
+$$                                                        ← fórmula en bloque, centrada
+
+```python titulo="buscar.py"                          ← código con resaltado y etiqueta (cualquier lenguaje común)
+def buscar(indice, q): ...
+```
+
+```mermaid                                             ← diagrama (flowchart, sequenceDiagram, gantt, pie, mindmap, timeline…), con los colores del tema
+flowchart LR
+  A[Documento] --> B{¿Cabe?} -- No --> C[Revisar]
+```
+
+```svg                                                 ← dibujo propio: hazlo tú en SVG (viewBox, colores del tema, sin scripts)
+<svg viewBox="0 0 400 120" xmlns="http://www.w3.org/2000/svg">…</svg>
+```
+````
+
+Para explicar un proceso, una arquitectura o un flujo, **un diagrama Mermaid o un SVG propio vale más que tres párrafos**. Los SVG que dibujes: `viewBox` siempre, texto legible (≥ 14 px a su tamaño), colores del documento (#0A1F3A, #00C1B8, #E8F8F7 en el tema Búho), nada de degradados ni sombras gratuitas. Revisa la captura: si no se entiende de un vistazo, simplifica. Los precios en dólares escríbelos «5 $» (con espacio) para que no se tomen por fórmula.
 
 **Gráficos:** con una tabla dentro de `::: grafico` se dibuja solo (colores accesibles, valores en las barras); `unidad=%` o `unidad=€` si no se deduce. En Word y PowerPoint sale como gráfico nativo con sus datos. Dentro de `::: columnas` se dibuja estrecho. Datos reales del usuario o con fuente, nunca inventados.
 

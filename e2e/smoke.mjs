@@ -389,6 +389,23 @@ try {
   await cli('elegir', doc, v2.propuesta)
   check(text(doc).includes('Versión dos, más corta.') && (await cliJson('propuestas', doc)).length === 0, 'elegir aplica la variante y descarta las demás')
 
+  // Formato técnico: fórmulas, código resaltado, Mermaid y SVG (sin scripts); en Word, como imagen.
+  const ft = join(out, 'docs', 'formato.md')
+  copyFileSync(join(root, 'examples', 'formato-tecnico.md'), ft)
+  await cli('open', ft)
+  check(await until(async () => (await frame.locator('.bx-mermaid svg').count()) === 2, 15000), 'Mermaid: los dos diagramas se dibujan')
+  check((await frame.locator('.katex').count()) >= 2 && (await frame.locator('.math-block').count()) === 1, 'Fórmulas con KaTeX (en línea y en bloque)')
+  check((await frame.locator('figure.code .hljs-keyword').count()) > 0, 'Código con resaltado de sintaxis')
+  check((await frame.locator('.bx-svg svg').count()) === 1 && (await frame.locator('.bx-svg script').count()) === 0, 'SVG incrustado, sin scripts')
+  const fw = await cliJson('export', ft, '--word', '--out', join(out, 'formato.docx'))
+  check((readFileSync(fw.file).toString('latin1').match(/word\/media\/[\w.-]+?\.png/g) ?? []).length >= 4, 'Word lleva diagramas, SVG y fórmulas como imagen')
+
+  // Aire IA: detección determinista.
+  writeFileSync(join(out, 'aire.md'), ['---', 'tipo: documento', 'titulo: "A"', 'portada: false', '---', '', '## Intro', '', 'En el mundo actual, la IA no es solo una herramienta, sino un aliado estratégico. ¡Ya!', '', 'Formad a dos personas este mes.', ''].join('\n'))
+  const es = await cliJson('estilo', join(out, 'aire.md'))
+  const tiposAire = es.hallazgos.map((h) => h.tipo)
+  check(['apertura-grandilocuente', 'no-es-solo', 'cliche-ia', 'exclamacion'].every((t) => tiposAire.includes(t)) && es.hallazgos.every((h) => h.linea === 9), `estilo detecta el aire IA (${es.marcas} marcas) y deja en paz el texto normal`)
+
   // Clic en la vista → el editor va a esa línea.
   await cli('open', doc)
   await frame.locator('.pg').first().waitFor()

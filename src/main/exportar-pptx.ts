@@ -7,6 +7,7 @@ import { newBuhoMd, parseAttrs } from '@shared/mdcore'
 import { PALETA, type DatosGrafico } from '@shared/grafico'
 import { temaDe } from '@shared/temas'
 import { resolverTema } from './temas'
+import { siguiente, type Rasterizada } from './exportar-word'
 import wordmarkPath from '../renderer/src/brand/wordmark.png?asset'
 import arbolPath from '../renderer/src/brand/arbol-deck.jpg?asset'
 
@@ -32,6 +33,8 @@ type El =
   | { k: 'tabla'; filas: { head: boolean; celdas: Run[][] }[] }
   | { k: 'grafico'; datos: DatosGrafico }
   | { k: 'imagen'; src: string }
+  | { k: 'png'; png: Buffer; w: number; h: number }
+  | { k: 'codigo'; texto: string; lang: string }
   | { k: 'caja'; oscura: boolean; parrafos: Parr[] }
   | { k: 'columnas'; cols: El[][] }
 
@@ -50,6 +53,18 @@ function closeOf(toks: Token[], i: number): number {
   return toks.length - 1
 }
 
+/** Una fórmula LaTeX sencilla, en texto legible. */
+function latexPlano(t: string): string {
+  const sup: Record<string, string> = { '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴', '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹', n: 'ⁿ', '-': '⁻', '+': '⁺' }
+  let s = t
+  for (let k = 0; k < 4; k++) s = s.replace(/\\[dt]?frac\{([^{}]*)\}\{([^{}]*)\}/g, '($1)/($2)')
+  s = s.replace(/\^\{([^{}]*)\}|\^(\w)/g, (_m, a: string | undefined, b: string | undefined) => [...(a ?? b ?? '')].map((ch) => sup[ch] ?? '^' + ch).join(''))
+  s = s.replace(/_\{([^{}]*)\}/g, '_$1')
+  const sim: Record<string, string> = { cdot: '·', times: '×', le: '≤', leq: '≤', ge: '≥', geq: '≥', neq: '≠', approx: '≈', sum: 'Σ', pi: 'π', alpha: 'α', beta: 'β', eta: 'η', lambda: 'λ', mu: 'μ', sigma: 'σ', Delta: 'Δ', infty: '∞', to: '→', rightarrow: '→', pm: '±', sqrt: '√' }
+  s = s.replace(/\\([a-zA-Z]+)/g, (_m, n: string) => sim[n] ?? '')
+  return s.replace(/[{}]/g, '').replace(/\s+/g, ' ').trim()
+}
+
 /** Texto en línea → trozos con negrita, cursiva, enlaces. */
 function runs(tok: Token | undefined, base: PptxGenJS.TextPropsOptions = {}): Run[] {
   const out: Run[] = []
@@ -66,6 +81,10 @@ function runs(tok: Token | undefined, base: PptxGenJS.TextPropsOptions = {}): Ru
         if (text) out.push({ text, options: { ...base, bold, italic, ...(strike ? { strike: 'sngStrike' as const } : {}), ...(c.type === 'code_inline' ? { fontFace: 'Consolas' } : {}), ...(href ? { hyperlink: { url: href } } : {}) } })
         break
       }
+      case 'math_inline':
+        // PowerPoint no entiende LaTeX: la fórmula, legible (a/b, ·, ², índices).
+        out.push({ text: latexPlano(c.content), options: { ...base, italic: true, fontFace: 'Cambria Math' } })
+        break
       case 'softbreak':
         out.push({ text: ' ', options: base })
         break
@@ -142,6 +161,9 @@ function porH3(toks: Token[]): { titulo: Run[]; cuerpo: Parr[] }[] {
   return g
 }
 
+/** Imágenes ya dibujadas (diagramas, SVG, fórmulas) en el orden del documento. */
+let cola: Rasterizada[] = []
+
 /** Tokens de una diapositiva → elementos (el texto seguido se junta en un solo cuadro). */
 function elementos(toks: Token[]): El[] {
   const out: El[] = []
@@ -208,6 +230,11 @@ function elementos(toks: Token[]): El[] {
           texto(parrafos(inner))
       }
       i = e
+    } else if (t.type === 'fence' || t.type === 'math_block') {
+      const lang = t.type === 'math_block' ? 'math' : (t.info ?? '').trim().split(/\s+/)[0].toLowerCase()
+      const im = lang === 'mermaid' || lang === 'svg' || lang === 'math' ? siguiente(cola, lang) : undefined
+      if (im) out.push({ k: 'png', png: im.png, w: im.w, h: im.h })
+      else out.push({ k: 'codigo', texto: t.content.replace(/\n$/, ''), lang })
     } else if (t.type === 'table_open') {
       const e = closeOf(toks, i)
       const filas: { head: boolean; celdas: Run[][] }[] = []
@@ -249,7 +276,8 @@ function columnasDe(md: string): string[] {
   return out
 }
 
-export async function exportPptx(source: string, docPath: string, baseDir: string): Promise<{ buffer: Buffer; slides: number }> {
+export async function exportPptx(source: string, docPath: string, baseDir: string, imagenes: Rasterizada[] = []): Promise<{ buffer: Buffer; slides: number }> {
+  cola = [...imagenes]
   const f = splitFront(source)
   const g = (...k: string[]): string | undefined => metaGet(f.meta, ...k)
   if (kindOf(f.meta) !== 'presentacion') throw new Error('PowerPoint es para presentaciones (tipo: presentacion). Para documentos, exporta a Word con --word')
@@ -301,6 +329,10 @@ export async function exportPptx(source: string, docPath: string, baseDir: strin
         return 3.4
       case 'imagen':
         return 3.4
+      case 'png':
+        return Math.min(4.2, (w * e.h) / e.w)
+      case 'codigo':
+        return e.texto.split('\n').length * 0.24 + 0.3
       case 'caja':
         return altoParr(e.parrafos, w - 0.5, 16) + 0.35
       case 'columnas':
@@ -422,6 +454,17 @@ export async function exportPptx(source: string, docPath: string, baseDir: strin
           if (p) s.addImage({ path: p, x, y, w, h: eh, sizing: { type: 'contain', w, h: eh } })
           break
         }
+        case 'png': {
+          // A su proporción, centrado, sin pasar de la caja.
+          const ratio = e.h / e.w
+          const iw = Math.min(w, eh / ratio)
+          s.addImage({ data: 'image/png;base64,' + e.png.toString('base64'), x: x + (w - iw) / 2, y, w: iw, h: iw * ratio })
+          break
+        }
+        case 'codigo':
+          s.addShape('roundRect', { x, y, w, h: eh, fill: { color: 'F7F9FB' }, line: { color: 'DFE5EC' }, rectRadius: 0.06 })
+          s.addText(e.texto, { x: x + 0.2, y: y + 0.12, w: w - 0.4, h: eh - 0.24, fontFace: 'Consolas', fontSize: 13, color: '1C2A3B', valign: 'top', margin: 0, fit: 'shrink' })
+          break
         case 'columnas': {
           const n = e.cols.length
           const cw = (w - 0.4 * (n - 1)) / n

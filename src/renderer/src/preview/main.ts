@@ -4,6 +4,8 @@ import { varsDe, type Tema } from '@shared/temas'
 import { paginate } from './paginate'
 import { enableEditing, flushEdit, installEditing, releaseHeld, restoreCaret, runCommand, saveCaret, typingRecently } from './visual-edit'
 import buhoCss from './buho.css?raw'
+import katexCss from 'katex/dist/katex.min.css?inline'
+import { dibujarDiagramas } from './diagramas'
 import { inspeccionar, montarMosaico, quitarMosaico } from './inspect'
 import './screen.css'
 
@@ -241,6 +243,9 @@ async function renderNow(req: RenderRequest): Promise<RenderResult> {
   if (b.title) document.title = b.title
   const tpl = document.createElement('template')
   tpl.innerHTML = b.html
+  // Diagramas Mermaid: se dibujan antes de medir y paginar.
+  const avisosDiagramas: RenderWarning[] = []
+  await dibujarDiagramas(tpl.content, b.tema, avisosDiagramas)
   structure(tpl.content)
   const caret = req.editable ? saveCaret() : null
   const scroll = scrollY
@@ -272,10 +277,12 @@ async function renderNow(req: RenderRequest): Promise<RenderResult> {
   } else link?.remove()
   next.style.cssText = 'position:absolute;left:0;top:0;visibility:hidden;width:100%'
   root.appendChild(next)
-  const warnings = [...b.warnings]
+  const warnings = [...b.warnings, ...avisosDiagramas]
   let pages = 0
   const st = document.head.querySelector<HTMLStyleElement>('style[data-buho]') ?? document.head.appendChild(Object.assign(document.createElement('style'), { textContent: buhoCss }))
   st.dataset.buho = '1'
+  // Fórmulas (KaTeX): su hoja de estilo y letras van dentro de la app (sin internet).
+  if (!document.head.querySelector('style[data-katex]')) document.head.appendChild(Object.assign(document.createElement('style'), { textContent: katexCss })).dataset.katex = '1'
   const pageRule = b.kind === 'presentacion' ? '@page { size: 13.3333in 7.5in; margin: 0; }' : '@page { size: A4; margin: 0; }'
   const ps = document.head.querySelector<HTMLStyleElement>('style[data-page]') ?? document.head.appendChild(Object.assign(document.createElement('style'), { textContent: '' }))
   ps.dataset.page = '1'

@@ -215,6 +215,53 @@ export function mosaico(source: string, path: string, cols = 4, porImagen = 12, 
   })
 }
 
+/**
+ * Diagramas, SVG y fórmulas en bloque, como imágenes nítidas (a 2×) y en el orden del documento:
+ * Word y PowerPoint no saben dibujar Mermaid ni KaTeX, así que reciben la imagen tal como se ve.
+ */
+export function rasterizar(source: string, path: string): Promise<{ tipo: 'mermaid' | 'svg' | 'math' | 'mathi'; png: Buffer; w: number; h: number }[]> {
+  return serial(async () => {
+    if (!(shown?.path === path && shown.source === source)) await render(source, path)
+    const total = (await win!.webContents.executeJavaScript("document.querySelectorAll('#root .bx-mermaid, #root .bx-svg, #root .math-block, #root .katex:not(.katex-display .katex)').length")) as number
+    const out: { tipo: 'mermaid' | 'svg' | 'math' | 'mathi'; png: Buffer; w: number; h: number }[] = []
+    for (let i = 0; i < total; i++) {
+      const r = (await win!.webContents.executeJavaScript(
+        `(() => {
+          const el = document.querySelectorAll('#root .bx-mermaid, #root .bx-svg, #root .math-block, #root .katex:not(.katex-display .katex)')[${i}]
+          document.getElementById('rasterizar')?.remove()
+          const box = document.createElement('div')
+          box.id = 'rasterizar'
+          box.className = document.querySelector('#root > div')?.className ?? ''
+          box.style.cssText = 'position:fixed;left:0;top:0;z-index:999999;background:#fff;padding:6px;zoom:2;overflow:hidden;box-shadow:0 0 0 4000px #fff'
+          if (!document.getElementById('rasterizar-css')) document.head.appendChild(Object.assign(document.createElement('style'), { id: 'rasterizar-css', textContent: '#rasterizar *{overflow:visible!important} ::-webkit-scrollbar{display:none}' }))
+          // Se fotografía al tamaño del dibujo (no del ancho de la página).
+          const dentro = el.querySelector('svg, .katex')
+          const iw = Math.ceil(dentro ? dentro.getBoundingClientRect().width : el.offsetWidth)
+          box.style.width = (iw + (el.classList.contains('katex') ? 2 : 12)) + 'px'
+          if (el.classList.contains('katex')) box.style.padding = '1px'
+          const copia = el.cloneNode(true)
+          copia.style.margin = '0'
+          copia.querySelectorAll('svg').forEach((g) => { g.style.width = iw + 'px'; g.style.maxWidth = 'none'; g.style.maxHeight = 'none' })
+          box.appendChild(copia)
+          ;(document.querySelector('#root > div') ?? document.body).appendChild(box)
+          scrollTo(0, 0)
+          const r = box.getBoundingClientRect()
+          const tipo = el.classList.contains('bx-mermaid') ? 'mermaid' : el.classList.contains('bx-svg') ? 'svg' : el.classList.contains('math-block') ? 'math' : 'mathi'
+          return { tipo, x: 0, y: 0, width: Math.ceil(r.width), height: Math.ceil(r.height), w: Math.round(r.width / 2), h: Math.round(r.height / 2) }
+        })()`
+      )) as { tipo: 'mermaid' | 'svg' | 'math' | 'mathi'; width: number; height: number; w: number; h: number }
+      const [w0, h0] = win!.getContentSize()
+      win!.setContentSize(Math.max(w0, r.width), Math.max(h0, r.height))
+      await win!.webContents.executeJavaScript('new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))')
+      const img = await win!.webContents.capturePage({ x: 0, y: 0, width: r.width, height: r.height })
+      win!.setContentSize(w0, h0)
+      out.push({ tipo: r.tipo, png: img.toPNG(), w: r.w, h: r.h })
+    }
+    await win!.webContents.executeJavaScript("document.getElementById('rasterizar')?.remove()")
+    return out
+  })
+}
+
 export function closeExporter(): void {
   if (win && !win.isDestroyed()) win.destroy()
 }

@@ -1161,3 +1161,131 @@ tr,
   font-size: 0.85em;
   color: #5d6b7c;
 }
+
+/* Código: bloque claro con etiqueta del lenguaje y resaltado sobrio (colores accesibles en papel) */
+figure.code {
+  margin: 3.5mm 0 4.5mm;
+  border: 1px solid #dfe5ec;
+  border-radius: 6px;
+  background: #f7f9fb;
+  overflow: hidden;
+  break-inside: avoid;
+}
+figure.code figcaption {
+  font: 600 7.6pt var(--sans);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #5d6b7c;
+  padding: 1.6mm 3.5mm;
+  border-bottom: 1px solid #e6ebf1;
+  background: #eff3f7;
+}
+figure.code pre {
+  margin: 0;
+  padding: 3mm 3.5mm;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  font: 8.6pt/1.5 'Cascadia Code', Consolas, 'Courier New', monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+figure.code code {
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: #1c2a3b;
+}
+.hljs-comment,
+.hljs-quote {
+  color: #6a7686;
+  font-style: italic;
+}
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-section,
+.hljs-doctag {
+  color: #2f4fb0;
+  font-weight: 600;
+}
+.hljs-string,
+.hljs-regexp,
+.hljs-addition,
+.hljs-meta .hljs-string {
+  color: #1c7c54;
+}
+.hljs-number,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-variable.constant_ {
+  color: #a3510c;
+}
+.hljs-title,
+.hljs-title.function_,
+.hljs-title.class_ {
+  color: #7a3db8;
+}
+.hljs-attr,
+.hljs-attribute,
+.hljs-property,
+.hljs-params,
+.hljs-variable {
+  color: #0b6b8a;
+}
+.hljs-built_in,
+.hljs-type,
+.hljs-tag,
+.hljs-name {
+  color: #b0336b;
+}
+.hljs-meta,
+.hljs-deletion {
+  color: #b33a3a;
+}
+.hljs-emphasis {
+  font-style: italic;
+}
+.hljs-strong {
+  font-weight: 700;
+}
+.deck figure.code pre {
+  font-size: 15px;
+}
+
+/* Fórmulas (KaTeX) */
+.math-block {
+  margin: 3.5mm 0 4mm;
+  text-align: center;
+  overflow-x: auto;
+  break-inside: avoid;
+}
+.katex {
+  font-size: 1.08em;
+}
+.math-error {
+  color: #b33a3a;
+}
+
+/* Diagramas (Mermaid) y SVG incrustado */
+.bx-mermaid,
+.bx-svg {
+  margin: 4mm 0 5mm;
+  text-align: center;
+  break-inside: avoid;
+}
+.bx-mermaid svg,
+.bx-svg svg {
+  display: inline-block;
+  max-width: 100%;
+  height: auto;
+  max-height: 150mm;
+}
+.deck .bx-mermaid svg,
+.deck .bx-svg svg {
+  max-height: 420px;
+}
+.bx-mermaid.con-error pre {
+  text-align: left;
+  border: 1px dashed #c9455a;
+}

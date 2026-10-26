@@ -1,6 +1,8 @@
 import type MarkdownIt from 'markdown-it'
 import { newBuhoMd, parseAttrs } from '@shared/mdcore'
 import { svgGrafico } from '@shared/grafico'
+import katex from 'katex'
+import hljs from 'highlight.js/lib/common'
 import { kindOf, metaGet, splitFront, splitSlides, type Slide } from '@shared/doc'
 import type { DocKind, RenderWarning } from '@shared/types'
 import { CONTAINERS, LAYOUTS, LAYOUT_ALIAS } from '@shared/syntax'
@@ -91,6 +93,23 @@ function enColumna(tokens: any[], i: number): boolean {
   return false
 }
 
+/** SVG escrito a mano o por un agente: se pinta tal cual, sin scripts ni eventos. */
+function limpiarSvg(src: string, env: Env, line?: number): string {
+  const doc = new DOMParser().parseFromString(src.trim(), 'image/svg+xml')
+  const svg = doc.documentElement
+  if (svg.nodeName.toLowerCase() !== 'svg' || doc.querySelector('parsererror')) {
+    env.warnings.push({ line, level: 'aviso', message: 'El bloque svg no es un SVG válido' })
+    return ''
+  }
+  for (const el of [...svg.querySelectorAll('script, foreignObject, iframe')]) el.remove()
+  for (const el of [svg, ...svg.querySelectorAll('*')])
+    for (const a of [...el.attributes]) if (/^on/i.test(a.name) || /^\s*javascript:/i.test(a.value)) el.removeAttribute(a.name)
+  if (!svg.getAttribute('viewBox') && svg.getAttribute('width') && svg.getAttribute('height')) svg.setAttribute('viewBox', `0 0 ${parseFloat(svg.getAttribute('width')!)} ${parseFloat(svg.getAttribute('height')!)}`)
+  svg.removeAttribute('width')
+  svg.removeAttribute('height')
+  return svg.outerHTML
+}
+
 function makeMd(): MarkdownIt {
   // Lectura (bloques ::: , \pagebreak, atributos {…}, líneas) compartida con la exportación a Word.
   const md = newBuhoMd()
@@ -120,6 +139,41 @@ function makeMd(): MarkdownIt {
     const style = a.kv.cols || a.kv.columnas ? ` style="--cols:${Number(a.kv.cols || a.kv.columnas) || 2}"` : ''
     return `<div class="${cls.join(' ')}" data-line="${t.attrGet('data-line') ?? ''}"${a.id ? ` id="${a.id}"` : ''}${style}>${icon ? `<span class="ic bx-ic">${icon}</span>` : ''}<div class="bx-body">\n`
   }
+  // Fórmulas (LaTeX) con KaTeX: igual en la vista que en el PDF.
+  const tex = (s: string, display: boolean, env: Env, line?: number): string => {
+    try {
+      return katex.renderToString(s, { displayMode: display, throwOnError: true, output: 'html', strict: 'ignore' })
+    } catch (e) {
+      env.warnings.push({ line, level: 'aviso', message: `Fórmula con error: ${(e as Error).message.replace(/^KaTeX parse error: /, '')}` })
+      return `<code class="math-error">${escHtml(s)}</code>`
+    }
+  }
+  md.renderer.rules.math_inline = (tokens: any[], i: number, _o: any, env: Env) => tex(tokens[i].content, false, env)
+  md.renderer.rules.math_block = (tokens: any[], i: number, _o: any, env: Env) =>
+    `<div class="math-block" data-line="${tokens[i].attrGet('data-line') ?? ''}" data-end="${tokens[i].attrGet('data-end') ?? ''}">${tex(tokens[i].content, true, env, Number(tokens[i].attrGet('data-line')) || undefined)}</div>\n`
+
+  // Bloques de código: resaltado de sintaxis; ```mermaid → diagrama; ```svg → el dibujo.
+  md.renderer.rules.fence = (tokens: any[], i: number, _o: any, env: Env) => {
+    const t = tokens[i]
+    const info = (t.info ?? '').trim()
+    const lang = info.split(/\s+/)[0].toLowerCase()
+    const titulo = info.match(/titulo="([^"]*)"|title="([^"]*)"/)
+    const lineas = `data-line="${t.attrGet('data-line') ?? ''}" data-end="${t.attrGet('data-end') ?? ''}"`
+    if (lang === 'mermaid') return `<figure class="bx-mermaid" ${lineas}><pre class="mermaid-src">${escHtml(t.content)}</pre></figure>\n`
+    if (lang === 'svg') return `<figure class="bx-svg" ${lineas}>${limpiarSvg(t.content, env, Number(t.attrGet('data-line')) || undefined)}</figure>\n`
+    const code = t.content.replace(/\n$/, '')
+    let html = escHtml(code)
+    if (lang && hljs.getLanguage(lang)) {
+      try {
+        html = hljs.highlight(code, { language: lang, ignoreIllegals: true }).value
+      } catch {
+        /* tal cual */
+      }
+    }
+    const etiqueta = titulo ? titulo[1] ?? titulo[2] : lang && lang !== 'text' && lang !== 'txt' ? (hljs.getLanguage(lang)?.name ?? lang) : ''
+    return `<figure class="code" ${lineas}>${etiqueta ? `<figcaption>${escHtml(etiqueta)}</figcaption>` : ''}<pre><code class="hljs${lang ? ' language-' + escHtml(lang) : ''}">${html}</code></pre></figure>\n`
+  }
+
   md.renderer.rules.contenedor_close = (tokens: any[], i: number) => {
     // El cierre del gráfico es </figure>: se busca su apertura.
     let depth = 0

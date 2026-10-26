@@ -81,7 +81,22 @@ function imagen(src: string, baseDir: string, maxW = 600): ImageRun | TextRun {
   return new ImageRun({ data, type, transformation: { width: w, height: Math.round((w * s.h) / s.w) } })
 }
 
-export async function exportDocx(source: string, docPath: string, baseDir: string): Promise<{ buffer: Buffer; pages?: number }> {
+export type Rasterizada = { tipo: 'mermaid' | 'svg' | 'math' | 'mathi'; png: Buffer; w: number; h: number }
+/** Saca la siguiente imagen de ese tipo (van en el orden del documento). */
+export function siguiente(cola: Rasterizada[], tipo: Rasterizada['tipo']): Rasterizada | undefined {
+  const i = cola.findIndex((x) => x.tipo === tipo)
+  return i >= 0 ? cola.splice(i, 1)[0] : undefined
+}
+
+export async function exportDocx(source: string, docPath: string, baseDir: string, imagenes: Rasterizada[] = []): Promise<{ buffer: Buffer; pages?: number }> {
+  const cola = [...imagenes]
+  /** Diagrama, SVG o fórmula ya dibujados: como imagen, a su tamaño (sin pasar del ancho). */
+  const pegar = (tipo: Rasterizada['tipo'], max = deckMax): Paragraph | null => {
+    const im = siguiente(cola, tipo)
+    if (!im) return null
+    const w = Math.min(max, im.w)
+    return new Paragraph({ alignment: AlignmentType.CENTER, spacing: { before: 120, after: 160 }, keepLines: true, children: [new ImageRun({ data: im.png, type: 'png', transformation: { width: w, height: Math.round((w * im.h) / im.w) } })] })
+  }
   const f = splitFront(source)
   const meta = f.meta
   const g = (...k: string[]): string | undefined => metaGet(meta, ...k)
@@ -93,6 +108,7 @@ export async function exportDocx(source: string, docPath: string, baseDir: strin
   const serif = font(tema.fuentes?.titulos, tema.base === 'buho' ? 'Georgia' : 'Calibri')
   const sans = font(tema.fuentes?.texto, 'Calibri')
   const deck = kindOf(meta) === 'presentacion'
+  const deckMax = deck ? 820 : 600
   const md = newBuhoMd()
 
   // ─── Texto en línea ─────────────────────────────────────────────────────────────────────────
@@ -113,6 +129,13 @@ export async function exportDocx(source: string, docPath: string, baseDir: strin
         case 'html_inline':
           if (c.content) push(new TextRun({ text: c.content.replace(/<[^>]+>/g, ''), bold, italics, strike, font: code ? 'Consolas' : undefined, color: link ? A : ctx.color, size: ctx.size, underline: link ? {} : undefined }))
           break
+        case 'math_inline': {
+          // Fórmula en línea: imagen a la altura del texto (o el LaTeX en cursiva si no hay imagen).
+          const im = siguiente(cola, 'mathi')
+          if (im) out.push(new ImageRun({ data: im.png, type: 'png', transformation: { width: Math.round(im.w * 0.75), height: Math.round(im.h * 0.75) } }))
+          else push(new TextRun({ text: c.content, italics: true, font: 'Cambria Math', color: ctx.color, size: ctx.size }))
+          break
+        }
         case 'code_inline':
           push(new TextRun({ text: c.content, font: 'Consolas', color: ctx.color, size: ctx.size, shading: { type: ShadingType.CLEAR, fill: 'EEF1F5', color: 'auto' } }))
           break
@@ -308,10 +331,26 @@ export async function exportDocx(source: string, docPath: string, baseDir: strin
           i = e + 1
           continue
         }
-        case 'fence':
-        case 'code_block':
-          for (const l of t.content.replace(/\n$/, '').split('\n')) out.push(new Paragraph({ children: [new TextRun({ text: l, font: 'Consolas', size: 18 })], shading: { type: ShadingType.CLEAR, fill: 'EEF1F5', color: 'auto' } }))
+        case 'math_block': {
+          const pr = pegar('math')
+          out.push(pr ?? new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: t.content, font: 'Cambria Math', italics: true })] }))
           break
+        }
+        case 'fence':
+        case 'code_block': {
+          const lang = (t.info ?? '').trim().split(/\s+/)[0].toLowerCase()
+          if (lang === 'mermaid' || lang === 'svg') {
+            const pr = pegar(lang)
+            if (pr) {
+              out.push(pr)
+              break
+            }
+          }
+          if (lang && lang !== 'mermaid' && lang !== 'svg') out.push(new Paragraph({ children: [new TextRun({ text: lang.toUpperCase(), bold: true, size: 14, color: '5D6B7C' })], shading: { type: ShadingType.CLEAR, fill: 'E6EBF1', color: 'auto' }, spacing: { before: 120, after: 0 } }))
+          for (const l of t.content.replace(/\n$/, '').split('\n')) out.push(new Paragraph({ children: [new TextRun({ text: l, font: 'Consolas', size: 18 })], shading: { type: ShadingType.CLEAR, fill: 'F7F9FB', color: 'auto' }, spacing: { after: 0, line: 260 } }))
+          out.push(new Paragraph({ text: '', spacing: { after: 100 } }))
+          break
+        }
         case 'hr':
           out.push(new Paragraph({ border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: 'DFE5EC', space: 1 } } }))
           break

@@ -28,6 +28,62 @@ export function newBuhoMd(): MarkdownIt {
   // Comillas españolas con el modo tipográfico.
   md.set({ quotes: '«»“”' })
 
+  // $$ … $$ (en sus propias líneas, o en una sola) → fórmula en bloque.
+  md.block.ruler.before('fence', 'math_block', (state: any, start: number, end: number, silent: boolean) => {
+    const text = (l: number): string => state.src.slice(state.bMarks[l] + state.tShift[l], state.eMarks[l])
+    if (state.sCount[start] - state.blkIndent >= 4) return false
+    const first = text(start).trim()
+    if (!first.startsWith('$$')) return false
+    let content: string
+    let last = start
+    if (first.length > 4 && first.endsWith('$$')) content = first.slice(2, -2)
+    else {
+      const lines: string[] = [first.slice(2)]
+      let found = false
+      while (++last < end) {
+        const l = text(last)
+        if (l.trim().endsWith('$$')) {
+          lines.push(l.trim().slice(0, -2))
+          found = true
+          break
+        }
+        lines.push(l)
+      }
+      if (!found) return false
+      content = lines.join('\n')
+    }
+    if (silent) return true
+    const t = state.push('math_block', 'div', 0)
+    t.block = true
+    t.content = content.trim()
+    t.map = [start, last + 1]
+    state.line = last + 1
+    return true
+  })
+  // $…$ dentro del texto (sin espacio junto a los $, y sin confundirlo con precios: «5 $»).
+  md.inline.ruler.after('escape', 'math_inline', (state: any, silent: boolean) => {
+    const src = state.src
+    const pos = state.pos
+    if (src[pos] !== '$' || src[pos + 1] === '$' || /\s/.test(src[pos + 1] ?? ' ')) return false
+    if (pos > 0 && /\d/.test(src[pos - 1])) return false
+    let k = pos + 1
+    while (k < state.posMax) {
+      if (src[k] === '\\') {
+        k += 2
+        continue
+      }
+      if (src[k] === '$') break
+      k++
+    }
+    if (k >= state.posMax || /\s/.test(src[k - 1]) || /\d/.test(src[k + 1] ?? '')) return false
+    if (!silent) {
+      const t = state.push('math_inline', 'span', 0)
+      t.content = src.slice(pos + 1, k)
+    }
+    state.pos = k + 1
+    return true
+  })
+
   // \pagebreak → salto de página.
   md.block.ruler.before('paragraph', 'salto', (state: any, start: number, _end: number, silent: boolean) => {
     const line = state.src.slice(state.bMarks[start] + state.tShift[start], state.eMarks[start]).trim()

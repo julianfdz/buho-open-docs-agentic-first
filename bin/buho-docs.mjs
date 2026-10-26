@@ -29,6 +29,10 @@
  *   buho-docs torneo <archivo.md> (--seccion "T" | --bloque #b… | --hueco id | --diapositiva N) [--n 3] [--modelos sonnet,opus] [--pide "…"]
  *   buho-docs elegir <archivo.md> <propuesta>       # aplica esa variante y descarta las demás
  *
+ *   Aire IA (frases y costumbres de texto generado):
+ *   buho-docs estilo <archivo.md>                   # dónde está y qué hacer (determinista)
+ *   buho-docs humanizar <archivo.md> [--directo]    # un agente por bloque, a la vez; deja propuestas
+ *
  *   buho-docs open <archivo.md>                     (lo abre y lo enseña)
  *   buho-docs read <archivo.md> [--lines]           (contenido; --lines con números de línea)
  *   buho-docs outline <archivo.md>                  (títulos y diapositivas con su línea)
@@ -619,6 +623,7 @@ switch (cmd) {
         '--- TEXTO ORIGINAL ---',
         fuenteDe(it)
       ].join('\n')
+    const { guia: guiaEstilo } = await call('GET', '/v1/guia-estilo')
     const prompt = (it, i) =>
       fuenteDe(it) ? convertir(it, i) : [
         `Escribe en español de España, en Markdown, para ${deck ? 'una presentación' : 'un documento'} titulado «${plan.titulo ?? ''}».`,
@@ -627,6 +632,7 @@ switch (cmd) {
         it.pide ? `Qué debe contar: ${it.pide}` : '',
         deck && /^(portada|cierre|seccion|cita)$/i.test(it.diseno ?? '') ? breve : sintaxis.replace('${palabras}', String(it.palabras ?? plan.palabras ?? 450)),
         'Iconos válidos: reloj, check, equipo, ventas, datos, escudo, objetivo, cerebro, ley, alerta, bombilla, dinero, soporte, robot.',
+        guiaEstilo,
         'No inventes cifras, estudios ni porcentajes concretos. No repitas el título. Devuelve solo el Markdown, sin bloques de código alrededor ni comentarios.'
       ]
         .filter(Boolean)
@@ -752,6 +758,7 @@ switch (cmd) {
       grupos.get(c.bloque.id).cs.push(c)
     }
     const doc = await call('GET', '/v1/read' + qs({ path }))
+    const { guia } = await call('GET', '/v1/guia-estilo')
     const t0 = Date.now()
     io.err(`Atendiendo ${abiertos.length} comentario(s) en ${grupos.size} bloque(s), en paralelo…\n`)
     const fallos = []
@@ -768,6 +775,7 @@ switch (cmd) {
         'Comentarios del usuario:',
         ...cs.map((c) => `- Sobre «${(c.seleccion || c.cita).trim().slice(0, 300)}»: ${c.texto}`),
         '',
+        guia,
         'Devuelve SOLO el Markdown que sustituye a ese bloque entero (puede ser más de un bloque si hay que añadir algo; conserva lo que no se pide cambiar, el estilo y el idioma: español de España). Si hay que quitar el bloque entero, devuelve solo la palabra ELIMINAR. Sin explicaciones ni bloques de código alrededor. No inventes cifras.'
       ].join('\n')
       const outp = await new Promise((ok) => {
@@ -827,8 +835,78 @@ switch (cmd) {
     if (opt.json) { out(r); break }
     print(`${r.kind === 'presentacion' ? 'Presentación' : 'Documento'}: ${r.total} ${r.kind === 'presentacion' ? 'diapositivas' : 'páginas'} · ${r.limpio ? 'sin problemas detectados' : r.problemas + ' problema(s)'}`)
     for (const pg of r.paginas) for (const a of pg.avisos) print(`  ${a.nivel === 'error' ? 'ERROR' : 'aviso'} pág. ${pg.n}${a.linea ? ` línea ${a.linea}` : ''}: ${a.mensaje}`)
+    if (r.aireIA) print(`Aire IA: ${r.aireIA} marca(s) de texto generado (buho-docs estilo para verlas, humanizar para quitarlas)`)
     for (const m of r.mosaicos) print(`Mosaico págs. ${m.desde}-${m.hasta}: ${m.file}`)
     for (const c of r.capturas) print(`  pág. ${c.page}: ${c.file}`)
+    break
+  }
+  // ─── Aire IA ───
+  case 'estilo': {
+    const r = await call('GET', '/v1/estilo' + qs({ path: file(0) }))
+    if (opt.json) { out(r); break }
+    if (!r.marcas) { print(`Sin aire IA (${r.palabras} palabras).`); break }
+    print(`Aire IA: ${r.marcas} marca(s) en ${r.palabras} palabras (${r.porMil} por cada mil)`)
+    for (const h of r.hallazgos) print(`  línea ${h.linea}${h.bloque ? ` #${h.bloque.id}` : ''} · «${h.texto.slice(0, 60)}» · ${h.mensaje}`)
+    print('Arréglalo tú (editar #id) o con agentes: buho-docs humanizar <doc> (deja propuestas).')
+    break
+  }
+  case 'humanizar': {
+    // Un agente por bloque con aire IA, a la vez; reescribe sin cambiar el contenido y deja propuestas.
+    const path = file(0)
+    const modelo = typeof opt.modelo === 'string' ? opt.modelo : 'sonnet'
+    const paralelo = Number(opt.paralelo) || 8
+    const quien = author() ?? 'Claude'
+    const r = await call('GET', '/v1/estilo' + qs({ path }))
+    const grupos = new Map()
+    for (const h of r.hallazgos) {
+      if (!h.bloque) continue
+      if (!grupos.has(h.bloque.id)) grupos.set(h.bloque.id, { bloque: h.bloque, hs: [] })
+      grupos.get(h.bloque.id).hs.push(h)
+    }
+    if (!grupos.size) { print('Sin aire IA que quitar.'); break }
+    io.err(`Humanizando ${grupos.size} bloque(s) (${r.marcas} marcas), a la vez…\n`)
+    const t0 = Date.now()
+    let hechas = 0
+    const fallos = []
+    const uno = async ({ bloque, hs }) => {
+      const pedir = [
+        'Reescribe este bloque de un documento para quitarle el «aire IA», sin cambiar lo que dice ni el formato de Búho Docs (títulos, ::: bloques, {icon=…}, tablas).',
+        'Problemas detectados:',
+        ...hs.map((h) => `- «${h.texto}»: ${h.mensaje}`),
+        '',
+        r.guia,
+        '',
+        '<<<',
+        bloque.markdown,
+        '>>>',
+        'Devuelve SOLO el Markdown reescrito, sin explicaciones ni bloques de código alrededor. Español de España.'
+      ].join('\n')
+      const salida = await new Promise((ok) => {
+        const child = spawn('claude', ['-p', '--model', modelo, '--output-format', 'json'], { shell: process.platform === 'win32', stdio: ['pipe', 'pipe', 'pipe'] })
+        let o = ''
+        child.stdout.on('data', (d) => (o += d))
+        child.on('error', (e) => ok(JSON.stringify({ is_error: true, result: String(e) })))
+        child.on('close', () => ok(o))
+        child.stdin.end(pedir)
+      })
+      let res
+      try { res = JSON.parse(salida) } catch { res = { is_error: true, result: String(salida).slice(0, 160) || 'sin respuesta' } }
+      if (res.is_error) { fallos.push(String(res.result)); io.err(`  ✗ #${bloque.id} · ${String(res.result).slice(0, 100)}\n`); return }
+      const txt = String(res.result ?? '').trim().replace(/^```(?:markdown|md)?\s*\n([\s\S]*?)\n```$/, '$1')
+      const resumen = `Sin aire IA (${hs.length} marca${hs.length > 1 ? 's' : ''})`
+      // Las listas no son un bloque: se cambian por su texto exacto.
+      if (bloque.lista) await call('POST', '/v1/replace', { path, find: bloque.markdown, replace: txt, author: quien, summary: resumen, proponer: !opt.directo })
+      else await call('POST', '/v1/bloque', { path, id: bloque.id, mode: 'replace', content: txt, author: quien, summary: resumen, proponer: !opt.directo })
+      hechas++
+      io.err(`  ✓ #${bloque.id} · ${hs.length} marca(s)\n`)
+    }
+    const cola = [...grupos.values()]
+    await Promise.all(Array.from({ length: Math.min(paralelo, cola.length) }, async () => { while (cola.length) await uno(cola.shift()) }))
+    const total = ((Date.now() - t0) / 1000).toFixed(1)
+    const despues = await call('GET', '/v1/estilo' + qs({ path }))
+    if (opt.json) { out({ ok: !fallos.length, bloques: grupos.size, hechas, antes: r.marcas, despues: despues.marcas, segundos: Number(total) }); break }
+    print(`${hechas} de ${grupos.size} bloque(s) en ${total} s${opt.directo ? ` · aire IA: ${r.marcas} → ${despues.marcas}` : ': revisa las propuestas (panel Revisión o buho-docs propuestas)'}`)
+    if (fallos.length) exitWith(1)
     break
   }
   // ─── Torneo: varias versiones de una zona a la vez; quien lo pide elige ───
@@ -842,6 +920,7 @@ switch (cmd) {
     const pide = typeof opt.pide === 'string' ? opt.pide : typeof opt.file === 'string' ? await content(9) : ''
     const grupo = 't' + Date.now().toString(36)
     const quien = author() ?? 'Claude'
+    const { guia } = await call('GET', '/v1/guia-estilo')
     const deck = z.kind === 'presentacion'
     const que = z.zona === 'seccion' ? `el cuerpo de la sección «${z.seccion}»` : z.zona === 'bloque' ? `el bloque #${z.bloque}${z.seccion ? ` (sección ${z.seccion})` : ''}` : z.zona === 'hueco' ? `el hueco «${z.hueco}» (${z.pide})` : `la diapositiva ${z.diapositiva}`
     io.err(`Torneo ${grupo}: ${n} versiones de ${que}, a la vez (${modelos.join(', ')})…\n`)
@@ -858,6 +937,7 @@ switch (cmd) {
         'Markdown de Búho Docs: ## y ### para títulos; bloques ::: caja | tarjetas N (cada ### una tarjeta, {icon=…}) | cifras N (- **8** texto) | pasos | columnas (+++ separa) | grafico barras (con una tabla) … :::.',
         deck ? 'Es una diapositiva 16:9: un título ## corto y poco texto (de 2 a 4 tarjetas o de 3 a 5 viñetas). Puedes poner directivas al principio (@diseño: normal, @etiqueta: …).' : '',
         z.zona === 'seccion' ? 'No repitas el título de la sección.' : '',
+        guia,
         'No inventes cifras ni estudios. Devuelve SOLO el Markdown, sin explicaciones ni bloques de código alrededor.'
       ].filter(Boolean).join('\n')
       const t = Date.now()

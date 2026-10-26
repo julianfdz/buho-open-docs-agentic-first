@@ -100,6 +100,8 @@ export const ROUTES: Record<string, string> = {
   'POST /v1/revisar': 'revisar',
   'POST /v1/scan': 'scan',
   'POST /v1/zona': 'zona',
+  'GET /v1/estilo': 'estilo',
+  'GET /v1/guia-estilo': 'guiaEstilo',
   'POST /v1/variante': 'variante',
   'POST /v1/guardar': 'guardar',
   'GET /v1/pagina': 'pagina',

@@ -10,7 +10,7 @@ import { changedLines, unified } from '@shared/diff'
 import { CONTAINERS, LAYOUTS } from '@shared/syntax'
 import * as docs from './docs'
 import { historyBefore, historyEntry, listHistory, tagNextChange } from './history'
-import { checkDoc, closeExporter, exportPdf, inspect, mosaico, pagesText, snapshot } from './exporter'
+import { checkDoc, closeExporter, exportPdf, inspect, mosaico, pagesText, rasterizar, snapshot } from './exporter'
 import { template } from './templates'
 import { editBlock, readClean, search, type BlockEditMode } from '@shared/index-ai'
 import { indexOf, mdFiles } from './indexcache'
@@ -21,6 +21,7 @@ import { exportDocx } from './exportar-word'
 import { exportPptx } from './exportar-pptx'
 import * as revision from './revision'
 import { aplicar, lineaActual, lineaCita, trozos } from '@shared/propuestas'
+import { aireIA, GUIA_SIN_AIRE_IA } from '@shared/estilo'
 import { crearTema, listarTemas, resolverTema, temasDir, type NuevoTema } from './temas'
 import { PLANTILLAS, desdePlantilla, plantillaById } from '@shared/plantillas'
 import { fechaHoy } from './templates'
@@ -108,7 +109,9 @@ const defaultPdf = (path: string): string => defaultOut(path, '.pdf')
 async function exportWord(path: string, out: string): Promise<{ ok: true; file: string; bytes: number; kind: string; slides?: number }> {
   const src = await docs.current(path)
   const deck = /\.pptx$/i.test(out)
-  const r = deck ? await exportPptx(src, path, dirname(path)) : await exportDocx(src, path, dirname(path))
+  // Diagramas, SVG y fórmulas en bloque: van como imagen (Word y PowerPoint no saben dibujarlos).
+  const imgs = /```\s*(mermaid|svg)|\$\$|\$[^\s$\d]/.test(src) ? await rasterizar(src, path) : []
+  const r = deck ? await exportPptx(src, path, dirname(path), imgs) : await exportDocx(src, path, dirname(path), imgs)
   const buffer = r.buffer
   mkdirSync(dirname(out), { recursive: true })
   try {
@@ -565,7 +568,37 @@ async function apiCall(method: string, p: Record<string, unknown>): Promise<unkn
         })
       }
       const conAvisos = info.pages.filter((pg) => pg.avisos.length).map((pg) => ({ n: pg.n, llenado: pg.llenado, avisos: pg.avisos }))
-      return { ok: true, path: target, kind: info.kind, total: info.pages.length, limpio: !conAvisos.length, problemas: conAvisos.reduce((k, x) => k + x.avisos.length, 0), paginas: conAvisos, llenado: info.pages.map((pg) => pg.llenado), mosaicos, capturas }
+      const aire = aireIA(src).length
+      return { ok: true, path: target, kind: info.kind, total: info.pages.length, aireIA: aire, limpio: !conAvisos.length, problemas: conAvisos.reduce((k, x) => k + x.avisos.length, 0), paginas: conAvisos, llenado: info.pages.map((pg) => pg.llenado), mosaicos, capturas }
+    }
+    // ─── Aire IA: frases y costumbres de texto generado ───
+    case 'guiaEstilo':
+      return { guia: GUIA_SIN_AIRE_IA }
+    case 'estilo': {
+      const target = path()
+      const src = await docs.current(target)
+      const hs = aireIA(src)
+      const ix = indexOf(target, src)
+      const L = src.split(/\r?\n/)
+      const palabras = splitFront(src).body.split(/\s+/).filter(Boolean).length
+      return {
+        ok: true,
+        path: target,
+        palabras,
+        marcas: hs.length,
+        porMil: Math.round((hs.length / Math.max(1, palabras)) * 1000 * 10) / 10,
+        hallazgos: hs.map((h) => {
+          // Una lista entera (todas sus viñetas seguidas): se reescribe junta.
+          if (h.tipo === 'lista-negrita-dos-puntos') {
+            let e = h.linea
+            while (e < L.length && (/^\s*([-*+]|\d+\.)\s/.test(L[e]) || /^\s{2,}\S/.test(L[e]))) e++
+            return { ...h, bloque: { id: `L${h.linea}`, lista: true, seccion: '', markdown: L.slice(h.linea - 1, e).join('\n') } }
+          }
+          const b = ix.blocks.find((x) => x.line <= h.linea && x.end >= h.linea && x.type !== 'diapositiva' && x.type !== 'titulo') ?? ix.blocks.find((x) => x.line <= h.linea && x.end >= h.linea)
+          return { ...h, bloque: b ? { id: b.id, seccion: b.path, markdown: L.slice(b.line - 1, b.end).join('\n') } : null }
+        }),
+        guia: GUIA_SIN_AIRE_IA
+      }
     }
     // ─── Torneo: varias versiones de una misma zona; el agente que lo pide elige ───
     case 'zona': {
