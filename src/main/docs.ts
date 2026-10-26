@@ -6,6 +6,7 @@ import type { ChangeKind, DocChange, OpenDoc, RecentDoc } from '@shared/types'
 import { addHistory, ensureBaseline } from './history'
 import { markOwnWrite, unwatchFile, watchFile } from './watcher'
 import { forget, warm } from './exporter'
+import { esBorrador } from './borradores'
 
 /**
  * Documentos abiertos. El archivo en disco es la fuente de verdad: la app guarda lo que escribes
@@ -37,7 +38,8 @@ function readText(path: string): string {
 }
 
 function toOpen(path: string, content: string): OpenDoc {
-  return { path, name: basename(path), kind: kindOf(splitFront(content).meta), title: titleOf(content, basename(path)), content }
+  const sinGuardar = esBorrador(path)
+  return { path, name: basename(path), kind: kindOf(splitFront(content).meta), title: sinGuardar ? basename(path, '.md') : titleOf(content, basename(path)), content, ...(sinGuardar ? { sinGuardar } : {}) }
 }
 
 // ─── Recientes ─────────────────────────────────────────────────────────────────────────────────
@@ -51,6 +53,8 @@ function readRecent(): Omit<RecentDoc, 'exists'>[] {
   }
 }
 function touchRecent(d: OpenDoc): void {
+  // Los borradores no van a recientes (aún no tienen sitio).
+  if (d.sinGuardar) return
   const list = [{ path: d.path, name: d.name, kind: d.kind, title: d.title, at: Date.now() }, ...readRecent().filter((r) => key(r.path) !== key(d.path))].slice(0, 30)
   try {
     writeFileSync(recentFile(), JSON.stringify(list, null, 2))

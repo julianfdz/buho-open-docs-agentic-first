@@ -7,6 +7,8 @@
  *
  *   buho-docs status | docs | templates | skill
  *   buho-docs new <archivo.md> [--kind documento|presentacion] [--title "…"] [--subtitle "…"] [--file contenido.md]
+ *   buho-docs nuevo [nombre] [--plantilla acta] [--tema id] [--file c.md]  # borrador sin guardar (imprime su ruta)
+ *   buho-docs guardar <borrador.md> <destino.md>   # guardar un borrador donde se quiera
  *   buho-docs open <archivo.md>                     (lo abre y lo enseña)
  *   buho-docs read <archivo.md> [--lines]           (contenido; --lines con números de línea)
  *   buho-docs outline <archivo.md>                  (títulos y diapositivas con su línea)
@@ -16,7 +18,7 @@
  *   buho-docs slide <archivo.md> <n> --file diapo.md [--mode replace|insert|delete|move] [--to N]
  *   buho-docs append <archivo.md> --file mas.md
  *   buho-docs meta <archivo.md> <campo> ["valor"]   (cabecera; sin valor lo quita)
- *   buho-docs export <archivo.md> [--out archivo.pdf]
+ *   buho-docs export <archivo.md> [--out archivo.pdf] [--word]   # --word (o --out x.docx): Word editable
  *   buho-docs check <archivo.md>                    (páginas y avisos: diapositivas que no caben, imágenes…)
  *   buho-docs history <archivo.md> [--limit 20] | diff <archivo.md> [id] | restore <archivo.md> <id>
  *   buho-docs show <archivo.md> [--line N]          (lo enseña en la app, en esa línea)
@@ -57,7 +59,7 @@ const portableDir = existsSync(join(here, '..', 'portable.txt')) ? join(here, '.
 const dataDir = process.env.BUHO_DATA_DIR || portableDir || join(process.env.APPDATA || join(process.env.HOME || '', '.config'), 'BuhoDocs')
 
 
-const FLAGS = new Set(['all', 'lines', 'json', 'no-launch', 'stdin', 'path', 'help', 'claude', 'quitar', 'ids', 'bloques', 'borrar', 'captura', 'ia', 'rapido'])
+const FLAGS = new Set(['all', 'lines', 'json', 'no-launch', 'stdin', 'path', 'help', 'claude', 'quitar', 'ids', 'bloques', 'borrar', 'captura', 'ia', 'rapido', 'word'])
 function parseArgs(argv) {
   const pos = []
   const opt = {}
@@ -264,6 +266,21 @@ switch (cmd) {
     opt.json ? out(r) : print(`Creado ${r.path} (${r.kind}) y abierto en Búho Docs`)
     break
   }
+  case 'nuevo': {
+    // Borrador sin guardar: no hace falta elegir dónde; se guarda luego con «guardar».
+    const c = typeof opt.file === 'string' || typeof opt.text === 'string' || opt.stdin ? await content(9, false) : undefined
+    const r = await call('POST', '/v1/nuevo', { nombre: args[0], kind: opt.kind, title: opt.title, subtitle: opt.subtitle, tema: opt.tema, plantilla: opt.plantilla, content: c })
+    opt.json ? out(r) : print(r.path)
+    if (!opt.json) io.err('Borrador sin guardar abierto en Búho Docs. Guárdalo con: buho-docs guardar <esta ruta> <destino.md>\n')
+    break
+  }
+  case 'guardar': {
+    const path = file(0)
+    if (!args[1]) die('Uso: buho-docs guardar <borrador.md> <destino.md>')
+    const r = await call('POST', '/v1/guardar', { path, como: R(args[1]) })
+    opt.json ? out(r) : print(`Guardado en ${r.path}`)
+    break
+  }
   case 'open': {
     const r = await call('POST', '/v1/open', { path: file(0) })
     opt.json ? out(r) : print(`Abierto: ${r.title} · ${r.path}`)
@@ -330,9 +347,11 @@ switch (cmd) {
   }
   case 'export': {
     const path = file(0)
-    io.err('Exportando a PDF…\n')
-    const r = await call('POST', '/v1/export', { path, out: typeof opt.out === 'string' ? R(opt.out) : undefined })
+    const word = opt.word || /^(docx|word)$/i.test(String(opt.formato ?? '')) || /\.docx$/i.test(String(opt.out ?? ''))
+    io.err(word ? 'Exportando a Word…\n' : 'Exportando a PDF…\n')
+    const r = await call('POST', '/v1/export', { path, out: typeof opt.out === 'string' ? R(opt.out) : undefined, formato: word ? 'docx' : undefined })
     if (opt.json) { out(r); break }
+    if (word) { print(`Word: ${r.file} · ${(r.bytes / 1024).toFixed(0)} KB`); break }
     print(`PDF: ${r.file} · ${r.pages} ${r.kind === 'presentacion' ? 'diapositivas' : 'páginas'} · ${(r.bytes / 1024).toFixed(0)} KB`)
     for (const w of r.warnings) print(`  ${w.level === 'error' ? 'ERROR' : 'aviso'}${w.slide ? ` diap. ${w.slide}` : ''}${w.line ? ` línea ${w.line}` : ''}: ${w.message}`)
     break

@@ -38,6 +38,8 @@ import { app } from 'electron'
  *   POST /v1/indice   {"path","niveles","quitar"}     → índice automático
  *   GET  /v1/temas · POST /v1/temas {"id","nombre","principal","acento","logo","marca","portada","base"…}
  *   GET  /v1/plantillas                             → plantillas genéricas (y las propias)
+ *   POST /v1/nuevo    {"kind","tema","plantilla","nombre"} → borrador sin guardar (devuelve su ruta)
+ *   POST /v1/guardar  {"path","como"}               → guardar un borrador (o guardar como)
  *   POST /v1/importar {"path","salida","tema"}     → Word, PDF, HTML o texto a Búho Docs
  *   GET  /v1/paginas?path=                          → páginas (o diapositivas) con sus tokens y títulos
  *   GET  /v1/pagina?path=&n=&captura=true&width=     → texto de una página tal como sale (y su PNG)
@@ -86,6 +88,8 @@ export const ROUTES: Record<string, string> = {
   'POST /v1/cli': 'cli',
   'GET /v1/paginas': 'paginas',
   'POST /v1/importar': 'importar',
+  'POST /v1/nuevo': 'nuevo',
+  'POST /v1/guardar': 'guardar',
   'GET /v1/pagina': 'pagina',
   'POST /v1/temas': 'temaCrear',
   'GET /v1/plantillas': 'plantillas',

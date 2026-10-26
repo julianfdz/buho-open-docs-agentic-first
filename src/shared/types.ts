@@ -23,6 +23,8 @@ export type HistoryItem = Omit<HistoryEntry, 'content'>
 
 export interface OpenDoc {
   path: string
+  /** Borrador sin guardar (vive en la caché de la app hasta que se guarda). */
+  sinGuardar?: boolean
   name: string
   kind: DocKind
   title: string
@@ -111,10 +113,19 @@ export interface BuhoDocsApi {
   elegirLogo(): Promise<string | null>
   plantillas(): Promise<{ carpeta: string; plantillas: { id: string; nombre: string; tipo: string; descripcion: string; propia?: boolean }[] }>
   crearDesdePlantilla(id: string, tema: string): Promise<OpenDoc | null>
+  /** Guardar un borrador (o guardar como): pide dónde. */
+  guardarComo(path: string): Promise<OpenDoc | null>
+  descartar(path: string): Promise<void>
+  confirmarCierre(path: string, sinGuardar: boolean, titulo: string): Promise<'guardar' | 'descartar' | 'cancelar'>
+  onRenombrado(cb: (m: { from: string; to: OpenDoc }) => void): () => void
+  onPendientes(cb: (m: { id: string }) => void): () => void
+  onGuardarTodo(cb: (m: { id: string }) => void): () => void
+  responderPendientes(id: string, p: { path: string; title: string; dirty: boolean; sinGuardar: boolean }[]): void
   close(path: string): Promise<void>
   /** Guarda lo escrito en la app (queda en el historial como tuyo). */
   save(path: string, content: string): Promise<{ ok: boolean; error?: string }>
   exportPdf(path: string, choose: boolean): Promise<{ ok: boolean; file?: string; pages?: number; error?: string }>
+  exportWord(path: string, choose: boolean): Promise<{ ok: boolean; file?: string; bytes?: number; error?: string }>
   history(path: string): Promise<HistoryItem[]>
   historyEntry(path: string, id: string): Promise<HistoryEntry | null>
   /** Contenido justo antes de una entrada (para enseñar qué cambió). */

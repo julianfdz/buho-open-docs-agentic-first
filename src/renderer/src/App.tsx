@@ -33,6 +33,8 @@ import logo from './brand/buho.png'
 interface Tab {
   path: string
   name: string
+  /** Borrador sin guardar (en la caché de la app). */
+  sinGuardar?: boolean
   content: string
   /** Lo último guardado en disco (lo que ve la IA). */
   saved: string
@@ -92,18 +94,19 @@ export default function App(): React.JSX.Element {
   const patchTab = (path: string, patch: Partial<Tab>): void => setTabs((ts) => ts.map((t) => (t.path === path ? { ...t, ...patch } : t)))
 
   const addTab = useCallback((d: OpenDoc, focus = true): void => {
-    setTabs((ts) => (ts.some((t) => t.path.toLowerCase() === d.path.toLowerCase()) ? ts : [...ts, { path: d.path, name: d.name, content: d.content, saved: d.content }]))
+    setTabs((ts) => (ts.some((t) => t.path.toLowerCase() === d.path.toLowerCase()) ? ts : [...ts, { path: d.path, name: d.name, content: d.content, saved: d.content, sinGuardar: d.sinGuardar }]))
     if (focus) setActive(d.path)
   }, [])
 
   // ─── Guardar ──────────────────────────────────────────────────────────────────────────────
 
-  const saveNow = useCallback(async (path: string): Promise<void> => {
+  const saveNow = useCallback(async (path: string, _forzar = false): Promise<void> => {
     const t = timers.current.get(path)
     if (t) clearTimeout(t)
     timers.current.delete(path)
     const tb = tabsRef.current.find((x) => x.path === path)
     if (!tb || tb.content === tb.saved) return
+    if (!settingsRef.current.autosave && !_forzar && !tb.sinGuardar) return
     const content = tb.content
     setSaving(true)
     const r = await window.buho.save(path, content)
@@ -285,6 +288,24 @@ export default function App(): React.JSX.Element {
       window.buho.onFlush(async ({ id, path }) => {
         await saveNow(path)
         window.buho.flushed(id)
+      }),
+      // Un borrador guardado (o «guardar como»): la pestaña pasa a ser el archivo nuevo.
+      window.buho.onRenombrado(({ from, to }) => {
+        setTabs((ts) => ts.map((t) => (t.path === from ? { path: to.path, name: to.name, content: to.content, saved: to.content, sinGuardar: to.sinGuardar } : t)))
+        tabsRef.current = tabsRef.current.map((t) => (t.path === from ? { path: to.path, name: to.name, content: to.content, saved: to.content, sinGuardar: to.sinGuardar } : t))
+        if (activeRef.current === from) setActive(to.path)
+      }),
+      // Al salir: qué hay sin guardar.
+      window.buho.onPendientes(async ({ id }) => {
+        if (settingsRef.current.autosave) for (const t of tabsRef.current) if (!t.sinGuardar) await saveNow(t.path)
+        window.buho.responderPendientes(
+          id,
+          tabsRef.current.map((t) => ({ path: t.path, title: titleOf(t.content, t.name), dirty: t.content !== t.saved, sinGuardar: !!t.sinGuardar })).filter((t) => t.dirty || t.sinGuardar)
+        )
+      }),
+      window.buho.onGuardarTodo(async ({ id }) => {
+        for (const t of tabsRef.current) if (!t.sinGuardar) await saveNow(t.path, true)
+        window.buho.flushed(id)
       })
     ]
     return () => offs.forEach((o) => o())
@@ -339,8 +360,37 @@ export default function App(): React.JSX.Element {
       say((e as Error).message.replace(/^Error invoking remote method '[^']+': (Error: )?/, ''))
     }
   }
+  /** Ctrl+S: un borrador pregunta dónde guardarse; un documento se guarda. */
+  const guardar = async (t: Tab): Promise<void> => {
+    if (t.sinGuardar) {
+      await saveNow(t.path)
+      const d = await window.buho.guardarComo(t.path)
+      if (d) say(`Guardado en ${d.path}`)
+    } else await saveNow(t.path, true)
+  }
   const closeTab = async (path: string): Promise<void> => {
-    await saveNow(path)
+    const t = tabsRef.current.find((x) => x.path === path)
+    // Borrador, o cambios sin guardar con el guardado automático apagado: se pregunta.
+    if (t && (t.sinGuardar || (!settingsRef.current.autosave && t.content !== t.saved))) {
+      const r = await window.buho.confirmarCierre(path, !!t.sinGuardar, titleOf(t.content, t.name))
+      if (r === 'cancelar') return
+      if (r === 'guardar') {
+        if (t.sinGuardar) {
+          await saveNow(path)
+          const d = await window.buho.guardarComo(path)
+          if (!d) return
+          path = d.path
+        } else await saveNow(path, true)
+      } else if (t.sinGuardar) {
+        await window.buho.descartar(path)
+        const rest = tabsRef.current.filter((x) => x.path !== path)
+        tabsRef.current = rest
+        setTabs(rest)
+        if (active === path) setActive(rest[rest.length - 1]?.path ?? null)
+        return
+      }
+    }
+    if (settingsRef.current.autosave) await saveNow(path)
     await window.buho.close(path)
     const rest = tabsRef.current.filter((t) => t.path !== path)
     setTabs(rest)
@@ -358,6 +408,18 @@ export default function App(): React.JSX.Element {
       const file = r.file
       say(`PDF listo: ${r.pages} ${kindOf(splitFront(tab.content).meta) === 'presentacion' ? 'diapositivas' : 'páginas'} · ${file.split(/[\\/]/).pop()}`, { action: { label: 'Abrir', run: () => void window.buho.openExternal(file) }, ms: 8000 })
     } else if (r.error) say(`No se pudo exportar: ${r.error}`, { ms: 8000 })
+  }
+
+  const doWord = async (choose = false): Promise<void> => {
+    if (!tab) return
+    await saveNow(tab.path, true)
+    setExporting(true)
+    const r = await window.buho.exportWord(tab.path, choose)
+    setExporting(false)
+    if (r.ok && r.file) {
+      const file = r.file
+      say(`Word listo · ${file.split(/[\\/]/).pop()}`, { action: { label: 'Abrir', run: () => void window.buho.openExternal(file) }, ms: 8000 })
+    } else if (r.error) say(`No se pudo exportar a Word: ${r.error}`, { ms: 8000 })
   }
 
   useEffect(() => {
@@ -404,7 +466,7 @@ export default function App(): React.JSX.Element {
             return (
               <div key={t.path} className={`tab ${t.path === active ? 'on' : ''}`} onClick={() => setActive(t.path)} title={t.path} onAuxClick={(e) => e.button === 1 && void closeTab(t.path)}>
                 {k === 'presentacion' ? <Presentation size={14} /> : <FileText size={14} />}
-                <span>{titleOf(t.content, t.name)}</span>
+                <span className={t.sinGuardar ? 'borrador' : ''}>{t.sinGuardar ? t.name.replace(/\.md$/, '') : titleOf(t.content, t.name)}</span>
                 {t.content !== t.saved && <i className="dot" />}
                 <button
                   className="x"
@@ -438,6 +500,9 @@ export default function App(): React.JSX.Element {
               </div>
               <button className={`icon ${panel === 'history' ? 'on' : ''}`} title="Historial (Ctrl+Shift+H)" onClick={() => setPanel(panel === 'history' ? null : 'history')}>
                 <History size={16} />
+              </button>
+              <button className="btn" onClick={() => void doWord()} disabled={exporting} title="Exportar a Word (.docx), editable. Clic derecho: elegir dónde" onContextMenu={() => void doWord(true)}>
+                <FileText size={15} /> Word
               </button>
               <button className="btn primary" onClick={() => void doExport()} disabled={exporting} title="Exportar a PDF junto al documento (Ctrl+P). Clic derecho: elegir dónde" onContextMenu={() => void doExport(true)}>
                 <FileDown size={15} /> {exporting ? 'Exportando…' : 'PDF'}
@@ -531,7 +596,7 @@ export default function App(): React.JSX.Element {
                   flash={edFlash}
                   jump={jump}
                   onChange={onChange}
-                  onSave={() => void saveNow(tab.path)}
+                  onSave={() => void guardar(tab)}
                   onCursorLine={(l) => setFollow(l)}
                   followLine={followEditor}
                 />
@@ -598,7 +663,16 @@ export default function App(): React.JSX.Element {
                 <Bot size={13} /> {lastAi.writing ? `${lastAi.author} está escribiendo…` : `${lastAi.author} ha editado a las ${new Date(lastAi.at).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}`}
               </span>
             )}
-            <span className="muted">{saving ? 'Guardando…' : dirty ? (settings.autosave ? 'Escribiendo…' : 'Sin guardar (Ctrl+S)') : 'Guardado'}</span>
+            {tab.sinGuardar ? (
+              <button className="stat-btn" onClick={() => void guardar(tab)} title="Elegir dónde guardarlo (Ctrl+S)">
+                Sin guardar · Guardar…
+              </button>
+            ) : (
+              <span className="muted">{saving ? 'Guardando…' : dirty ? (settings.autosave ? 'Escribiendo…' : 'Cambios sin guardar (Ctrl+S)') : 'Guardado'}</span>
+            )}
+            <button className="stat-btn" onClick={() => updateSettings({ autosave: !settings.autosave })} title="Guardar solo al dejar de escribir, o solo con Ctrl+S">
+              Guardado automático: {settings.autosave ? 'sí' : 'no'}
+            </button>
             <span className="muted path" title={tab.path} onClick={() => void window.buho.showInFolder(tab.path)}>
               {tab.path}
             </span>

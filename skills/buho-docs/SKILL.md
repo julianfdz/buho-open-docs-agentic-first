@@ -30,6 +30,10 @@ Búho Docs (de Buho Corps Systems) hace **documentos A4** y **presentaciones 16:
 
 **Importar algo que ya existe (Word, PDF, HTML, texto):** `buho-docs importar archivo.docx [--salida doc.md] [--tema id]`. Word sale bien al momento (títulos, listas, tablas, negritas, imágenes). Los PDF se maquetan con IA en paralelo (sus tablas no se recuperan con reglas); `--rapido` solo convierte. Por defecto se guarda en Documentos\Buho Docs: el original no se toca.
 
+**Exportar a Word:** `buho-docs export doc.md --word` (o `--out x.docx`): .docx editable con estilos de título reales, listas, tablas, cajas, tarjetas, cifras, índice, portada, cabecera y pie. Para quien tenga que retocarlo en Word, LibreOffice o Google Docs; lo que se envía tal cual sigue siendo el PDF.
+
+**Borradores sin guardar:** `buho-docs nuevo [nombre] [--plantilla acta] [--tema id] [--file c.md]` crea un documento sin elegir dónde (imprime su ruta) y se abre en la app como «sin guardar»; se trabaja con él igual que con cualquier .md (append, section, export…) y cuando esté listo `buho-docs guardar <ruta-del-borrador> <destino.md>`. Si nadie lo guarda, sigue ahí al volver a abrir la app. Úsalo cuando el usuario no ha dicho dónde quiere el documento.
+
 **Crear escribiéndolo tú:**
 1. Escribe el Markdown completo en un archivo temporal (con tu herramienta de escribir archivos) siguiendo §4–§6.
 2. `buho-docs new "C:\ruta\Mi documento.md" --file borrador.md --author Claude` (o `--kind presentacion --title "…"` para partir de la plantilla). Se abre en la app.
@@ -71,6 +75,9 @@ buho-docs meta <doc.md> <campo> ["valor"]       # cabecera (sin valor la quita)
 buho-docs write <doc.md> --file entero.md       # reescribir todo (solo si cambia casi todo)
 buho-docs check <doc.md>                        # páginas/diapositivas y avisos
 buho-docs export <doc.md> [--out archivo.pdf]   # PDF (por defecto junto al .md)
+buho-docs export <doc.md> --word [--out x.docx]  # Word editable (.docx)
+buho-docs nuevo [nombre] [--plantilla id] [--tema id] [--file c.md]  # borrador sin guardar → imprime su ruta
+buho-docs guardar <borrador.md> <destino.md>    # guardar un borrador
 buho-docs history <doc.md> | diff <doc.md> [id] | restore <doc.md> <id>
 buho-docs show <doc.md> [--line N]              # llevar al usuario a esa parte
 buho-docs tag <doc.md> --author Claude          # firmar tu próxima edición directa del archivo

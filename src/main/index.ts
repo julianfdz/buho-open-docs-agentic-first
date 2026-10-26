@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { basename, dirname, extname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { randomUUID } from 'node:crypto'
-import { DEFAULT_SETTINGS, type ChangeKind, type DocKind, type Settings } from '@shared/types'
+import { DEFAULT_SETTINGS, type ChangeKind, type DocKind, type OpenDoc, type Settings } from '@shared/types'
 import { applyOps, editSection, editSlide, fillHole, holes, kindOf, type Op, outline, setIndex, parseValue, replaceText, setMeta, splitFront, splitSlides, titleOf, type SectionMode, type SlideMode } from '@shared/doc'
 import { unified } from '@shared/diff'
 import { CONTAINERS, LAYOUTS } from '@shared/syntax'
@@ -16,6 +16,8 @@ import { editBlock, readClean, search, type BlockEditMode } from '@shared/index-
 import { indexOf, mdFiles } from './indexcache'
 import { runInApp } from './clirun'
 import { importar } from './importar'
+import * as borradores from './borradores'
+import { exportDocx } from './exportar-word'
 import { crearTema, listarTemas, resolverTema, temasDir, type NuevoTema } from './temas'
 import { PLANTILLAS, desdePlantilla, plantillaById } from '@shared/plantillas'
 import { fechaHoy } from './templates'
@@ -90,7 +92,25 @@ function plantillaPor(id: string): { tipo: 'documento' | 'presentacion'; cuerpo:
   return { tipo: kindOf(fr.meta), cuerpo: fr.body.replace(/^\s+/, ''), nombre: id }
 }
 
-const defaultPdf = (path: string): string => join(dirname(path), basename(path, extname(path)) + '.pdf')
+/** Dónde va lo exportado: junto al .md; si es un borrador, a Documentos\Buho Docs (no a la caché). */
+const defaultOut = (path: string, ext: string): string => {
+  const dir = borradores.esBorrador(path) ? join(app.getPath('documents'), 'Buho Docs') : dirname(path)
+  mkdirSync(dir, { recursive: true })
+  return join(dir, basename(path, extname(path)) + ext)
+}
+const defaultPdf = (path: string): string => defaultOut(path, '.pdf')
+/** Exportar a Word (.docx): mismo contenido, editable en Word, LibreOffice o Google Docs. */
+async function exportWord(path: string, out: string): Promise<{ ok: true; file: string; bytes: number; kind: string }> {
+  const src = await docs.current(path)
+  const { buffer } = await exportDocx(src, path, dirname(path))
+  try {
+    writeFileSync(out, buffer)
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'EBUSY' || (e as NodeJS.ErrnoException).code === 'EPERM') throw new Error(`No puedo escribir ${out}: está abierto (ciérralo en Word o usa --out con otro nombre)`)
+    throw e
+  }
+  return { ok: true, file: out, bytes: buffer.length, kind: kindOf(splitFront(src).meta) }
+}
 
 async function apiCall(method: string, p: Record<string, unknown>): Promise<unknown> {
   const s = (k: string): string | undefined => (p[k] === undefined || p[k] === null || p[k] === '' ? undefined : String(p[k]))
@@ -112,7 +132,7 @@ async function apiCall(method: string, p: Record<string, unknown>): Promise<unkn
     case 'status':
       return { ok: true, app: 'Búho Docs', version: app.getVersion(), open: docs.openDocs(), userData: app.getPath('userData') }
     case 'docs':
-      return { open: docs.openDocs(), recent: docs.recent() }
+      return { open: docs.openDocs().map((d) => ({ ...d, sinGuardar: borradores.esBorrador(d.path) })), recent: docs.recent() }
     case 'templates':
       return {
         kinds: ['documento', 'presentacion'],
@@ -198,6 +218,7 @@ async function apiCall(method: string, p: Record<string, unknown>): Promise<unkn
     }
     case 'export': {
       const target = path()
+      if (/^(docx|word)$/i.test(s('formato') ?? '') || /\.docx$/i.test(s('out') ?? '')) return exportWord(target, s('out') ? resolve(s('out')!) : defaultOut(target, '.docx'))
       const out = s('out') ? resolve(s('out')!) : defaultPdf(target)
       const r = await exportPdf(await docs.current(target), target, out)
       return { ok: true, ...r }
@@ -364,6 +385,21 @@ async function apiCall(method: string, p: Record<string, unknown>): Promise<unkn
       const argv = Array.isArray(p.argv) ? p.argv.map(String) : []
       return runInApp(apiCall, argv, s('cwd') ?? process.cwd())
     }
+    case 'nuevo': {
+      // Borrador sin guardar (para agentes: devuelve su ruta; se guarda con «guardar»).
+      const kind: DocKind = /^(presentaci[oó]n|slides?|deck)$/i.test(s('kind') ?? '') ? 'presentacion' : 'documento'
+      const pl = s('plantilla') ? plantillaPor(s('plantilla')!) : null
+      const content = s('content') ?? (pl ? desdePlantilla(pl, s('title') ?? '', s('tema') ?? 'buho', fechaHoy()) : template(kind, s('title'), s('subtitle'), s('tema')))
+      const d = docs.openDoc(borradores.crear(s('nombre') ?? s('title') ?? pl?.nombre ?? borradores.nombreSinTitulo(), content), true)
+      reveal()
+      return { ok: true, path: d.path, sinGuardar: true, kind: d.kind }
+    }
+    case 'guardar': {
+      const target = path()
+      const como = need('como', 'ruta donde guardarlo (.md)')
+      const d = await guardarComo(target, resolve(como.endsWith('.md') ? como : como + '.md'))
+      return { ok: true, path: d?.path }
+    }
     case 'temas':
       return { carpeta: temasDir(), temas: listarTemas().map(({ css, ...t }) => ({ ...t, css: css ? `${css.length} caracteres` : undefined })) }
     case 'temaCrear': {
@@ -447,6 +483,51 @@ async function apiCall(method: string, p: Record<string, unknown>): Promise<unkn
 
 // ─── Ventana ───────────────────────────────────────────────────────────────────────────────────
 
+let cerrarYa = false
+type Pendiente = { path: string; title: string; dirty: boolean; sinGuardar: boolean }
+const pendWaiters = new Map<string, (p: Pendiente[]) => void>()
+/** Pregunta a la ventana qué documentos tienen cambios sin guardar. */
+function pendientes(): Promise<Pendiente[]> {
+  return new Promise((done) => {
+    const id = randomUUID()
+    const t = setTimeout(() => done([]), 1500)
+    pendWaiters.set(id, (p) => {
+      clearTimeout(t)
+      done(p)
+    })
+    win?.webContents.send('pendientes', { id })
+  })
+}
+function guardarPendientes(): Promise<void> {
+  return new Promise((done) => {
+    const id = randomUUID()
+    const t = setTimeout(done, 3000)
+    flushWaiters.set(id, () => {
+      clearTimeout(t)
+      done()
+    })
+    win?.webContents.send('guardarTodo', { id })
+  })
+}
+
+/** Guardar un borrador (o «guardar como»): elegir dónde, copiar con sus imágenes y seguir con el nuevo. */
+async function guardarComo(path: string, destino?: string): Promise<OpenDoc | null> {
+  const nombre = basename(path, '.md')
+  let out = destino
+  if (!out) {
+    const r = await dialog.showSaveDialog(win!, { title: 'Guardar documento', defaultPath: join(app.getPath('documents'), 'Buho Docs', nombre + '.md'), filters: [{ name: 'Documento de Búho Docs (Markdown)', extensions: ['md'] }] })
+    if (r.canceled || !r.filePath) return null
+    out = r.filePath
+  }
+  const content = await docs.current(path)
+  docs.closeDoc(path)
+  if (borradores.esBorrador(path)) borradores.guardarEn(path, out)
+  else writeFileSync(out, content)
+  const d = docs.openDoc(out)
+  win?.webContents.send('renombrado', { from: path, to: d })
+  return d
+}
+
 function createWindow(): void {
   const dark = getSettings().theme === 'dark'
   win = new BrowserWindow({
@@ -462,6 +543,34 @@ function createWindow(): void {
     show: false,
     webPreferences: { preload: join(__dirname, '../preload/index.js'), sandbox: false, contextIsolation: true, spellcheck: true }
   })
+  // Al cerrar: si hay documentos sin guardar, se pregunta (los borradores se conservan igualmente).
+  win.on('close', (e) => {
+    if (cerrarYa || process.env.BUHO_E2E) return
+    e.preventDefault()
+    void pendientes().then(async (p) => {
+      const dirty = p.filter((x) => !x.sinGuardar && x.dirty)
+      const nuevos = p.filter((x) => x.sinGuardar)
+      if (dirty.length || nuevos.length) {
+        const r = await dialog.showMessageBox(win!, {
+          type: 'question',
+          title: 'Salir de Búho Docs',
+          message: dirty.length ? `Hay ${dirty.length} documento(s) con cambios sin guardar.` : `Tienes ${nuevos.length} documento(s) sin guardar.`,
+          detail:
+            [...dirty.map((x) => '• ' + x.title + ' (cambios)'), ...nuevos.map((x) => '• ' + x.title + ' (sin guardar)')].join('\n') +
+            (nuevos.length ? '\n\nLos documentos sin guardar se conservan como borrador y se recuperan al volver a abrir la app.' : ''),
+          buttons: dirty.length ? ['Guardar y salir', 'Salir sin guardar', 'Cancelar'] : ['Salir', 'Cancelar'],
+          defaultId: 0,
+          cancelId: dirty.length ? 2 : 1,
+          noLink: true
+        })
+        if (dirty.length && r.response === 2) return
+        if (!dirty.length && r.response === 1) return
+        if (dirty.length && r.response === 0) await guardarPendientes()
+      }
+      cerrarYa = true
+      win?.close()
+    })
+  })
   // La ventana oculta de exportar no debe mantener viva la app al cerrar la principal.
   win.on('closed', () => {
     win = null
@@ -472,6 +581,14 @@ function createWindow(): void {
     win?.show()
   })
   win.webContents.on('did-finish-load', () => {
+    // Borradores de la última vez: se recuperan tal cual estaban.
+    for (const b of borradores.listar()) {
+      try {
+        win?.webContents.send('open', docs.openDoc(b))
+      } catch {
+        /* borrador ilegible */
+      }
+    }
     if (pendingOpen) {
       try {
         win?.webContents.send('open', docs.openDoc(pendingOpen))
@@ -536,10 +653,9 @@ function registerIpc(): void {
     if (r.canceled) return null
     const f = r.filePaths[0]
     if (/\.(md|markdown)$/i.test(f)) return docs.openDoc(f)
-    // Word, PDF…: se importa a Documentos\Buho Docs (el original no se toca).
-    const base = join(app.getPath('documents'), 'Buho Docs', basename(f, extname(f)))
-    let salida = base + '.md'
-    for (let i = 2; existsSync(salida); i++) salida = `${base} (${i}).md`
+    // Word, PDF…: se abre como borrador (sin guardar): el original no se toca y no hace falta elegir
+    // dónde guardarlo hasta que se quiera (Ctrl+S).
+    const salida = borradores.rutaNueva(basename(f, extname(f)))
     if (/\.pdf$/i.test(f)) {
       // Un PDF se maqueta con IA en paralelo (las tablas no se pueden recuperar con reglas): va en
       // segundo plano y el documento aparece escribiéndose en directo.
@@ -552,15 +668,25 @@ function registerIpc(): void {
     return docs.openDoc(imp.path)
   })
   ipcMain.handle('open', (_e, path: string) => docs.openDoc(path))
-  ipcMain.handle('create', async (_e, kind: DocKind, estilo?: string) => {
-    const r = await dialog.showSaveDialog(win!, {
-      title: kind === 'presentacion' ? 'Nueva presentación' : 'Nuevo documento',
-      defaultPath: join(app.getPath('documents'), kind === 'presentacion' ? 'Nueva presentación.md' : 'Nuevo documento.md'),
-      filters: [{ name: 'Documento Markdown', extensions: ['md'] }]
+  // Nuevo: un borrador al momento, sin elegir dónde guardarlo.
+  ipcMain.handle('create', (_e, kind: DocKind, estilo?: string) => docs.openDoc(borradores.crear(borradores.nombreSinTitulo(), template(kind, '', '', estilo))))
+  ipcMain.handle('guardarComo', async (_e, path: string) => guardarComo(path))
+  ipcMain.handle('descartar', (_e, path: string) => {
+    docs.closeDoc(path)
+    borradores.descartar(path)
+  })
+  ipcMain.handle('confirmarCierre', async (_e, path: string, sinGuardar: boolean, titulo: string) => {
+    const r = await dialog.showMessageBox(win!, {
+      type: 'question',
+      title: 'Cerrar documento',
+      message: sinGuardar ? `«${titulo}» no está guardado. ¿Quieres guardarlo?` : `¿Guardar los cambios de «${titulo}»?`,
+      detail: sinGuardar ? 'Si lo descartas, se borra.' : 'Si no los guardas, se pierden los cambios desde el último guardado.',
+      buttons: sinGuardar ? ['Guardar…', 'Descartar', 'Cancelar'] : ['Guardar', 'No guardar', 'Cancelar'],
+      defaultId: 0,
+      cancelId: 2,
+      noLink: true
     })
-    if (r.canceled || !r.filePath) return null
-    if (existsSync(r.filePath)) return docs.openDoc(r.filePath)
-    return docs.createDoc(r.filePath, template(kind, '', '', estilo), 'Tú', 'user')
+    return (['guardar', 'descartar', 'cancelar'] as const)[r.response]
   })
   ipcMain.handle('close', (_e, path: string) => docs.closeDoc(path))
   ipcMain.handle('save', (_e, path: string, content: string) => {
@@ -585,6 +711,19 @@ function registerIpc(): void {
       return { ok: false, error: (e as Error).message }
     }
   })
+  ipcMain.handle('exportWord', async (_e, path: string, choose: boolean) => {
+    try {
+      let out = defaultOut(path, '.docx')
+      if (choose) {
+        const r = await dialog.showSaveDialog(win!, { title: 'Exportar a Word', defaultPath: out, filters: [{ name: 'Documento de Word', extensions: ['docx'] }] })
+        if (r.canceled || !r.filePath) return { ok: false }
+        out = r.filePath
+      }
+      return await exportWord(path, out)
+    } catch (e) {
+      return { ok: false, error: (e as Error).message }
+    }
+  })
   ipcMain.handle('history', (_e, path: string) => listHistory(path, 300))
   ipcMain.handle('bloques', () => apiCall('bloques', {}))
   ipcMain.handle('tema', (_e, id: string) => resolverTema(id))
@@ -603,9 +742,7 @@ function registerIpc(): void {
   ipcMain.handle('plantillas', () => apiCall('plantillas', {}))
   ipcMain.handle('crearDesdePlantilla', async (_e, id: string, tema: string) => {
     const pl = plantillaPor(id)
-    const r = await dialog.showSaveDialog(win!, { title: `Nuevo: ${pl.nombre}`, defaultPath: join(app.getPath('documents'), pl.nombre + '.md'), filters: [{ name: 'Documento Markdown', extensions: ['md'] }] })
-    if (r.canceled || !r.filePath) return null
-    return docs.createDoc(r.filePath, desdePlantilla(pl, '', tema, fechaHoy()), 'Tú', 'user')
+    return docs.openDoc(borradores.crear(pl.nombre, desdePlantilla(pl, '', tema, fechaHoy())))
   })
   ipcMain.handle('historyEntry', (_e, path: string, id: string) => historyEntry(path, id))
   ipcMain.handle('historyBefore', (_e, path: string, id: string) => historyBefore(path, id))
@@ -618,6 +755,10 @@ function registerIpc(): void {
   ipcMain.handle('showInFolder', (_e, path: string) => shell.showItemInFolder(path))
   ipcMain.handle('openExternal', (_e, url: string) => (/^https?:\/\//.test(url) ? shell.openExternal(url) : shell.openPath(url)))
   ipcMain.handle('copy', (_e, text: string) => clipboard.writeText(text))
+  ipcMain.on('pendientes', (_e, id: string, p: Pendiente[]) => {
+    pendWaiters.get(id)?.(p)
+    pendWaiters.delete(id)
+  })
   ipcMain.on('flushed', (_e, id: string) => {
     flushWaiters.get(id)?.()
     flushWaiters.delete(id)

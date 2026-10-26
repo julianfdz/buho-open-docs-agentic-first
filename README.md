@@ -22,6 +22,8 @@ Hacer un PDF bonito con una IA suele ser: pedirlo, esperar a que genere un scrip
 - **CLI instantáneo**: con la app abierta, `buho-docs` es un ejecutable nativo de 10 KB que le pasa el comando a la app (que lo ejecuta por dentro y atiende muchos a la vez): ~45 ms por comando.
 - **De una frase a un documento**: `buho-docs generar informe.md "guía de ciberseguridad para una pyme" --paginas 8`: un modelo hace el índice y varios escriben las secciones a la vez (~40 s).
 - **Importar**: Word (.docx), PDF, HTML y texto a Búho Docs (`buho-docs importar` o Abrir en la app). Word sale al momento con títulos, tablas e imágenes; los PDF se maquetan con IA en paralelo.
+- **Exportar a Word** (.docx editable: estilos de título, listas, tablas, cajas, tarjetas, índice, portada, cabecera y pie con páginas), además de PDF. Botón «Word» o `buho-docs export doc.md --word`.
+- **Abrir sin guardar**: «Nuevo», las plantillas y abrir un Word o un PDF crean un borrador al momento, sin elegir dónde; Ctrl+S lo guarda donde quieras. Al cerrar una pestaña o salir con algo sin guardar, se pregunta; los borradores se recuperan al volver a abrir. Guardado automático activable en la barra de estado. Para agentes: `buho-docs nuevo` y `buho-docs guardar`.
 - **Por páginas**: `paginas` (qué hay en cada una) y `pagina N [--captura]` (su texto tal como sale, y la imagen).
 - **Lectura rápida para IAs**: `mapa` (secciones con tokens), `leer` (texto limpio con límite de tokens), `buscar` (determinista: palabras, frase exacta y erratas, en milisegundos, en un documento o una carpeta) e **ids por bloque** para cambiar un párrafo exacto con `editar #b…`.
 

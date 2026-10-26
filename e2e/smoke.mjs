@@ -324,6 +324,20 @@ try {
   const ck2 = await cliJson('check', nd.path)
   check(ck2.warnings.length === 0, `La plantilla no da avisos (${ck2.warnings.map((w) => w.message).join('; ')})`)
 
+  // Exportar a Word: un .docx de verdad (zip con word/document.xml) con los títulos como estilos.
+  const wd = await cliJson('export', doc, '--word', '--out', join(out, 'beneficios.docx'))
+  const zip = readFileSync(wd.file)
+  check(zip.subarray(0, 2).toString() === 'PK' && zip.includes('word/document.xml') && wd.bytes > 5000, `export --word crea un .docx (${(wd.bytes / 1024).toFixed(0)} KB)`)
+
+  // Borradores: nuevo sin elegir dónde, se edita como cualquier documento y «guardar» lo lleva a su sitio.
+  const nb = await cliJson('nuevo', 'Acta e2e', '--plantilla', 'acta')
+  check(nb.sinGuardar && existsSync(nb.path) && nb.path.includes('sin-guardar'), 'nuevo crea un borrador sin guardar')
+  check((await cliJson('docs')).open.some((d) => d.path === nb.path && d.sinGuardar), 'docs marca el borrador como sin guardar')
+  await cli('append', nb.path, '--text', 'Punto añadido por la IA.', '--author', 'Claude')
+  const destino = join(out, 'docs', 'guardados', 'Acta e2e.md')
+  const gd = await cliJson('guardar', nb.path, destino)
+  check(gd.path === destino && text(destino).includes('Punto añadido por la IA.') && !existsSync(dirname(nb.path)), 'guardar copia el borrador y borra su carpeta temporal')
+
   // Clic en la vista → el editor va a esa línea.
   await cli('open', doc)
   await frame.locator('.pg').first().waitFor()

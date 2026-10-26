@@ -915,3 +915,24 @@ code {
   color: var(--danger);
   margin: 0;
 }
+
+.tab .borrador {
+  font-style: italic;
+}
+.tab .borrador::after {
+  content: ' · sin guardar';
+  color: var(--muted);
+  font-size: 11px;
+}
+.stat-btn {
+  border: 0;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+}
+.stat-btn:hover {
+  color: var(--accent-d);
+  text-decoration: underline;
+}
